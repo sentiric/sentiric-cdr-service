@@ -12,6 +12,7 @@
 *   Node.js (or Python, Go)
 *   Message Queue Client (e.g., KafkaJS for Node.js, confluent-kafka-python for Python)
 *   Database connection (e.g., PostgreSQL client, Elasticsearch client).
+* we can use TimescaleDB (PostgreSQL extension)	Hypertable partitioning uygulayın / Vector DB / Vector Extension for pgsql
 
 **API Interactions (As a Message Consumer & Optional API Provider):**
 *   **Consumes Messages From:** `sentiric-sip-server`, `sentiric-media-service` (via Message Queue).

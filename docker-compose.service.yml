@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  cdr-service:
+    image: ${DOCKER_REGISTRY:-ghcr.io/sentiric}/sentiric-cdr-service:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentiric_cdr_service
+    env_file:
+      - ./.env
+    # Bu bir worker olduğu için dışarıya port açmasına gerek yok.
+    networks:
+      - sentiric-net
+    restart: unless-stopped
+
+networks:
+  sentiric-net:
+    name: ${NETWORK_NAME:-sentiric-net}
+    driver: bridge
