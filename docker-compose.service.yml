@@ -1,20 +1,58 @@
-version: '3.8'
-
-services:
-  cdr-service:
-    image: ${DOCKER_REGISTRY:-ghcr.io/sentiric}/sentiric-cdr-service:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sentiric_cdr_service
-    env_file:
-      - ./.env
-    # Bu bir worker olduğu için dışarıya port açmasına gerek yok.
-    networks:
-      - sentiric-net
-    restart: unless-stopped
-
 networks:
   sentiric-net:
     name: ${NETWORK_NAME:-sentiric-net}
     driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+
+services:
+  # VERİ KATMANI
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ./.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../sentiric-infrastructure/postgres-init:/docker-entrypoint-initdb.d
+    # ports:
+    #   - "${POSTGRES_DB_PORT}:${POSTGRES_DB_PORT}"
+    networks:
+      - sentiric-net
+    profiles:
+      - default
+      - data
+    restart: always
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    networks:
+      - sentiric-net
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: always
+    profiles:
+      - default
+      - data
+
+    
+  cdr-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: sentiric-cdr-service
+    env_file:
+      - ./.env
+    volumes:
+      - ../sentiric-infrastructure/tls/certs:/etc/sentiric/tls:ro
+    ports:
+      - "${CDR_SERVICE_PORT}:${CDR_SERVICE_PORT}"
+    networks:
+      - sentiric-net
+    profiles:
+      - default
+    restart: always
