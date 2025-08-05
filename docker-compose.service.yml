@@ -83,6 +83,7 @@ services:
     networks:
       - sentiric-net
     profiles:
+      - app
       - default
     restart: always
 
