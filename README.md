@@ -36,3 +36,8 @@ We welcome contributions! Please refer to the [Sentiric Governance](https://gith
 
 **License:**
 This project is licensed under the [License](LICENSE).
+
+
+```bash
+go run ./cmd/cdr-service
+```

@@ -5,28 +5,55 @@ networks:
 
 volumes:
   postgres_data:
+  rabbitmq_data:
   qdrant_data:
 
 services:
   # VERİ KATMANI
   postgres:
     image: postgres:16-alpine
-    env_file:
-      - ./.env
+    env_file: 
+      - ./.env.docker
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../sentiric-infrastructure/postgres-init:/docker-entrypoint-initdb.d
-    # ports:
-    #   - "${POSTGRES_DB_PORT}:${POSTGRES_DB_PORT}"
     networks:
       - sentiric-net
     profiles:
       - default
       - data
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5   
+
+  rabbitmq:
+    image: rabbitmq:4.1.0-management-alpine
+    env_file: 
+      - ./.env.docker
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+    # ports:
+    #   - "${RABBITMQ_PORT}:${RABBITMQ_PORT}"
+    #   - "15672:15672"      
+    networks:
+      - sentiric-net
+    profiles:
+      - default
+      - data
+    restart: always
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3    
 
   qdrant:
     image: qdrant/qdrant:latest
+    env_file:
+      - ./.env.docker    
     ports:
       - "6333:6333"
     networks:
@@ -46,13 +73,22 @@ services:
       args:
         SERVICE_NAME: sentiric-cdr-service
     env_file:
-      - ./.env
+      - ./.env.docker
     volumes:
       - ../sentiric-infrastructure/tls/certs:/etc/sentiric/tls:ro
     ports:
+      # Metriklerin Prometheus tarafından okunabilmesi için
+      - "${METRICS_PORT:-9092}:${METRICS_PORT:-9092}"    
       - "${CDR_SERVICE_PORT}:${CDR_SERVICE_PORT}"
     networks:
       - sentiric-net
     profiles:
       - default
     restart: always
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy    
+        
