@@ -1,3 +1,4 @@
+// ========== FILE: sentiric-cdr-service/internal/config/config.go ==========
 package config
 
 import (
@@ -7,29 +8,37 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config, servis için tüm yapılandırma değerlerini tutar.
 type Config struct {
 	Env         string
 	PostgresURL string
 	RabbitMQURL string
 	QueueName   string
 	MetricsPort string
+
+	// gRPC İstemci Ayarları
+	UserServiceGrpcURL string
+	CdrServiceCertPath string
+	CdrServiceKeyPath  string
+	GrpcTlsCaPath      string
 }
 
-// Load, ortam değişkenlerini doğru öncelik sırasıyla yükler.
 func Load() (*Config, error) {
-	godotenv.Load() // Yerel geliştirme için .env dosyasını arar
+	godotenv.Load()
 
 	cfg := &Config{
-		Env:         getEnvWithDefault("ENV", "production"),
-		PostgresURL: getEnv("POSTGRES_URL"),
-		RabbitMQURL: getEnv("RABBITMQ_URL"),
-		QueueName:   getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
-		MetricsPort: getEnvWithDefault("METRICS_PORT", "9092"),
+		Env:                getEnvWithDefault("ENV", "production"),
+		PostgresURL:        getEnv("POSTGRES_URL"),
+		RabbitMQURL:        getEnv("RABBITMQ_URL"),
+		QueueName:          getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
+		MetricsPort:        getEnvWithDefault("METRICS_PORT", "9092"),
+		UserServiceGrpcURL: getEnv("USER_SERVICE_GRPC_URL"),
+		CdrServiceCertPath: getEnv("CDR_SERVICE_CERT_PATH"),
+		CdrServiceKeyPath:  getEnv("CDR_SERVICE_KEY_PATH"),
+		GrpcTlsCaPath:      getEnv("GRPC_TLS_CA_PATH"),
 	}
 
-	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" {
-		return nil, fmt.Errorf("kritik ortam değişkenleri eksik: POSTGRES_URL, RABBITMQ_URL")
+	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" || cfg.UserServiceGrpcURL == "" {
+		return nil, fmt.Errorf("kritik ortam değişkenleri eksik: POSTGRES_URL, RABBITMQ_URL, USER_SERVICE_GRPC_URL")
 	}
 
 	return cfg, nil

@@ -1,31 +1,44 @@
+// ========== FILE: sentiric-cdr-service/internal/handler/event_handler.go ==========
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"regexp"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
+	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
+	"google.golang.org/grpc/metadata"
 )
 
-type GenericEvent struct {
-	EventType string          `json:"eventType"`
-	CallID    string          `json:"callId"`
-	Timestamp time.Time       `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"`
+// Olay payload'unu yakalamak için daha detaylı struct'lar
+type EventPayload struct {
+	EventType  string          `json:"eventType"`
+	TraceID    string          `json:"traceId"`
+	CallID     string          `json:"callId"`
+	From       string          `json:"from"`
+	To         string          `json:"to"`
+	Timestamp  time.Time       `json:"timestamp"`
+	RawPayload json.RawMessage `json:"-"` // Orijinal payload'u saklamak için
 }
 
+var fromUserRegex = regexp.MustCompile(`sip:\+?(\d+)@`)
+
 type EventHandler struct {
-	db              *sql.DB // DÜZELTME: Tekrar *sql.DB tipine döndük.
+	db              *sql.DB
+	userClient      userv1.UserServiceClient
 	log             zerolog.Logger
 	eventsProcessed *prometheus.CounterVec
 	eventsFailed    *prometheus.CounterVec
 }
 
-func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
+func NewEventHandler(db *sql.DB, uc userv1.UserServiceClient, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
 	return &EventHandler{
 		db:              db,
+		userClient:      uc,
 		log:             log,
 		eventsProcessed: processed,
 		eventsFailed:    failed,
@@ -33,28 +46,106 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 }
 
 func (h *EventHandler) HandleEvent(body []byte) {
-	var event GenericEvent
-	event.Timestamp = time.Now().UTC()
-
+	var event EventPayload
 	if err := json.Unmarshal(body, &event); err != nil {
 		h.log.Error().Err(err).Bytes("raw_message", body).Msg("Hata: Mesaj JSON formatında değil")
 		h.eventsFailed.WithLabelValues("unknown", "json_unmarshal").Inc()
 		return
 	}
+	event.RawPayload = json.RawMessage(body)
 
+	l := h.log.With().Str("call_id", event.CallID).Str("trace_id", event.TraceID).Str("event_type", event.EventType).Logger()
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
-	l := h.log.With().Str("call_id", event.CallID).Str("event_type", event.EventType).Logger()
 
-	l.Info().Msg("CDR olayı alındı, veritabanına işleniyor...")
+	l.Info().Msg("CDR olayı alındı, işleniyor...")
 
-	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	_, err := h.db.Exec(query, event.CallID, event.EventType, event.Timestamp, event.Payload)
-
-	if err != nil {
-		l.Error().Err(err).Msg("CDR olayı veritabanına yazılamadı.")
-		h.eventsFailed.WithLabelValues(event.EventType, "db_insert_failed").Inc()
+	// Adım 1: Ham olayı 'call_events' tablosuna yaz (her zaman)
+	if err := h.logRawEvent(l, &event); err != nil {
+		// Hata zaten loglandı, metrik artır ve çık
+		h.eventsFailed.WithLabelValues(event.EventType, "db_raw_insert_failed").Inc()
 		return
 	}
 
-	l.Info().Msg("CDR olayı başarıyla veritabanına kaydedildi.")
+	// Adım 2: Olay tipine göre özet tablosunu işle
+	switch event.EventType {
+	case "call.started":
+		h.handleCallStarted(l, &event)
+	case "call.ended":
+		// Gelecekte eklenecek
+		// h.handleCallEnded(l, &event)
+	default:
+		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
+	}
+}
+
+func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error {
+	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
+	_, err := h.db.Exec(query, event.CallID, event.EventType, event.Timestamp, event.RawPayload)
+	if err != nil {
+		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
+		return err
+	}
+	l.Info().Msg("Ham CDR olayı başarıyla veritabanına kaydedildi.")
+	return nil
+}
+
+func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
+	callerNumber := extractPhoneNumber(event.From)
+	if callerNumber == "" {
+		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
+		return
+	}
+
+	ctx := context.Background()
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-trace-id", event.TraceID)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// user-service'e sorarak kullanıcıyı bul
+	userRes, err := h.userClient.FindUserByContact(ctx, &userv1.FindUserByContactRequest{
+		ContactType:  "phone",
+		ContactValue: callerNumber,
+	})
+
+	var userID, tenantID sql.NullString
+	var contactID sql.NullInt32
+
+	if err != nil {
+		l.Warn().Err(err).Msg("Arayan, user-service'de bulunamadı. Çağrı kaydı kullanıcıyla ilişkilendirilmeyecek.")
+		// Kullanıcı bulunamasa bile kaydı atabiliriz, user_id ve contact_id NULL kalır.
+	} else if userRes.User != nil {
+		userID = sql.NullString{String: userRes.User.Id, Valid: true}
+		tenantID = sql.NullString{String: userRes.User.TenantId, Valid: true}
+		// Eşleşen contact'ı bul
+		for _, c := range userRes.User.Contacts {
+			if c.ContactValue == callerNumber {
+				contactID = sql.NullInt32{Int32: c.Id, Valid: true}
+				break
+			}
+		}
+		l.Info().Str("user_id", userID.String).Msg("Arayan kullanıcı başarıyla bulundu.")
+	}
+
+	// 'calls' tablosuna özet kaydı at
+	query := `
+		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, start_time, status)
+		VALUES ($1, $2, $3, $4, $5, 'STARTED')
+		ON CONFLICT (call_id) DO NOTHING
+	`
+	_, err = h.db.Exec(query, event.CallID, userID, contactID, tenantID, event.Timestamp)
+	if err != nil {
+		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) veritabanına yazılamadı.")
+		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
+		return
+	}
+
+	l.Info().Msg("Özet çağrı kaydı (CDR) başarıyla oluşturuldu.")
+}
+
+func extractPhoneNumber(fromURI string) string {
+	matches := fromUserRegex.FindStringSubmatch(fromURI)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
 }

@@ -1,13 +1,16 @@
+// ========== FILE: sentiric-cdr-service/internal/queue/rabbitmq.go ==========
 package queue
 
 import (
 	"context"
-	"sync" // WaitGroup için eklendi
+	"sync"
 	"time"
 
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/rs/zerolog"
 )
+
+const exchangeName = "sentiric_events"
 
 func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.Error) {
 	var conn *amqp091.Connection
@@ -31,19 +34,59 @@ func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.
 	return nil, nil
 }
 
-// StartConsumer artık bir WaitGroup pointer'ı alıyor.
 func StartConsumer(ctx context.Context, ch *amqp091.Channel, queueName string, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
-	_, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
+	err := ch.ExchangeDeclare(
+		exchangeName,
+		"fanout",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Kuyruk deklare edilemedi")
+		log.Fatal().Err(err).Str("exchange", exchangeName).Msg("Exchange deklare edilemedi")
 	}
 
-	msgs, err := ch.Consume(queueName, "", true, false, false, false, nil)
+	q, err := ch.QueueDeclare(
+		"",
+		false,
+		true,
+		true,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Özel tüketici kuyruğu oluşturulamadı")
+	}
+
+	err = ch.QueueBind(
+		q.Name,
+		"",
+		exchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal().Err(err).Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kuyruk exchange'e bağlanamadı")
+	}
+
+	log.Info().Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kuyruk başarıyla exchange'e bağlandı.")
+
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Mesajlar tüketilemedi")
 	}
 
-	log.Info().Str("queue", queueName).Msg("Kuyruk dinleniyor, mesajlar bekleniyor...")
+	log.Info().Str("exchange", exchangeName).Msg("Exchange dinleniyor, mesajlar bekleniyor...")
 
 	for {
 		select {

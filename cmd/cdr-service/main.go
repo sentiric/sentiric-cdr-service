@@ -1,3 +1,4 @@
+// ========== FILE: sentiric-cdr-service/cmd/cdr-service/main.go ==========
 package main
 
 import (
@@ -9,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sentiric/sentiric-cdr-service/internal/client" // YENİ
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
 	"github.com/sentiric/sentiric-cdr-service/internal/handler"
@@ -36,7 +38,14 @@ func main() {
 	}
 	defer db.Close()
 
-	eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
+	// YENİ: User Service istemcisini oluşturuyoruz.
+	userClient, err := client.NewUserServiceClient(cfg)
+	if err != nil {
+		appLog.Fatal().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı")
+	}
+
+	// YENİ: İstemciyi event handler'a enjekte ediyoruz.
+	eventHandler := handler.NewEventHandler(db, userClient, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 	rabbitCh, closeChan := queue.Connect(cfg.RabbitMQURL, appLog)
 	if rabbitCh != nil {
