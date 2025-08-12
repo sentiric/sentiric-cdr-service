@@ -24,7 +24,6 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
-// YENİ: SIP URI'sinden telefon numarasını çıkarmak ve normalize etmek için.
 var fromUserRegex = regexp.MustCompile(`sip:(\+?\d+)@`)
 
 type EventHandler struct {
@@ -68,7 +67,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	case "call.started":
 		h.handleCallStarted(l, &event)
 	case "call.ended":
-		h.handleCallEnded(l, &event) // <-- YENİ DURUM
+		h.handleCallEnded(l, &event)
 	default:
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
@@ -86,7 +85,6 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// YENİ: `sip-signaling` ile aynı normalizasyon mantığını kullanıyoruz.
 	callerNumber := extractAndNormalizePhoneNumber(event.From)
 	if callerNumber == "" {
 		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
@@ -133,10 +131,8 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	l.Info().Msg("Özet çağrı kaydı (CDR) başarıyla oluşturuldu.")
 }
 
-// YENİ FONKSİYON: Çağrıyı sonlandırır.
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var startTime sql.NullTime
-	// Önce çağrının başlangıç zamanını bul
 	err := h.db.QueryRow("SELECT start_time FROM calls WHERE call_id = $1", event.CallID).Scan(&startTime)
 	if err != nil {
 		l.Warn().Err(err).Msg("Çağrı sonlandırma olayı için başlangıç kaydı bulunamadı. Güncelleme atlanıyor.")
@@ -144,6 +140,9 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 
 	duration := int(event.Timestamp.Sub(startTime.Time).Seconds())
+	if duration < 0 {
+		duration = 0
+	} // Negatif süre olmasını engelle
 
 	query := `
 		UPDATE calls
@@ -156,13 +155,11 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_update_failed").Inc()
 		return
 	}
-
 	if rows, _ := res.RowsAffected(); rows > 0 {
 		l.Info().Int("duration", duration).Msg("Özet çağrı kaydı (CDR) başarıyla sonlandırıldı ve güncellendi.")
 	}
 }
 
-// YENİ FONKSİYON: SIP URI'sinden telefon numarasını çıkarır ve normalize eder.
 func extractAndNormalizePhoneNumber(uri string) string {
 	matches := fromUserRegex.FindStringSubmatch(uri)
 	if len(matches) < 2 {
