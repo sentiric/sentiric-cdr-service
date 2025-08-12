@@ -1,7 +1,7 @@
-# --- İNŞA AŞAMASI ---
-FROM golang:1.24.5-alpine AS builder
+# --- İNŞA AŞAMASI (DEBIAN TABANLI) ---
+FROM golang:1.24-bullseye AS builder
 
-RUN apk add --no-cache git build-base
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential
 
 WORKDIR /app
 
@@ -11,18 +11,20 @@ RUN go mod verify
 
 COPY . .
 
-ARG SERVICE_NAME=sentiric-cdr-service
+ARG SERVICE_NAME
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/bin/${SERVICE_NAME} ./cmd/cdr-service
 
-# --- ÇALIŞTIRMA AŞAMASI ---
+# --- ÇALIŞTIRMA AŞAMASI (ALPINE) ---
 FROM alpine:latest
 
-# TLS doğrulaması için ca-certificates gerekli
 RUN apk add --no-cache ca-certificates
 
-ARG SERVICE_NAME=sentiric-cdr-service
+ARG SERVICE_NAME
 WORKDIR /app
 
 COPY --from=builder /app/bin/${SERVICE_NAME} .
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
 
 ENTRYPOINT ["./sentiric-cdr-service"]
