@@ -1,43 +1,50 @@
-# Sentiric CDR Service (Call Detail Record)
+# 📊 Sentiric CDR Service (Call Detail Record)
 
-**Description:** Collects, processes, and stores detailed records of all call activities and lifecycle events for billing, analysis, and reporting within the Sentiric platform.
+[![Status](https://img.shields.io/badge/status-active-success.svg)]()
+[![Language](https://img.shields.io/badge/language-Go-blue.svg)]()
+[![Protocol](https://img.shields.io/badge/protocol-RabbitMQ-orange.svg)]()
 
-**Core Responsibilities:**
-*   Consuming call lifecycle events (e.g., Call-Start, Call-Answered, Call-End, Call-Transfer) from a message queue.
-*   Aggregating event data to form comprehensive Call Detail Records (CDRs).
-*   Persistently storing CDRs in an optimized database for querying and analysis (e.g., PostgreSQL, ClickHouse, Elasticsearch).
-*   Optionally, providing APIs for querying and reporting on stored CDR data.
+**Sentiric CDR Service**, Sentiric platformundaki tüm çağrı aktivitelerinin ve yaşam döngüsü olaylarının detaylı kayıtlarını toplar, işler ve faturalandırma, analiz ve raporlama için kalıcı olarak saklar.
 
-**Technologies:**
-*   Node.js (or Python, Go)
-*   Message Queue Client (e.g., KafkaJS for Node.js, confluent-kafka-python for Python)
-*   Database connection (e.g., PostgreSQL client, Elasticsearch client).
-* we can use TimescaleDB (PostgreSQL extension)	Hypertable partitioning uygulayın / Vector DB / Vector Extension for pgsql
+Bu servis, platformun "kara kutusu" ve hafızasıdır.
 
-**API Interactions (As a Message Consumer & Optional API Provider):**
-*   **Consumes Messages From:** `sentiric-sip-server`, `sentiric-media-service` (via Message Queue).
-*   **Optionally Provides API For:** `sentiric-dashboard` (for CDR reporting and queries).
+## 🎯 Temel Sorumluluklar
 
-**Local Development:**
-1.  Clone this repository: `git clone https://github.com/sentiric/sentiric-cdr-service.git`
-2.  Navigate into the directory: `cd sentiric-cdr-service`
-3.  Install dependencies: `npm install` (Node.js) or `pip install -r requirements.txt` (Python).
-4.  Create a `.env` file from `.env.example` to configure message queue and database connections.
-5.  Start the service: `npm start` (Node.js) or `python app.py` (Python).
+*   **Olay Tüketimi:** `RabbitMQ`'daki `sentiric_events` exchange'ini dinleyerek `call.started` ve `call.ended` gibi tüm çağrı yaşam döngüsü olaylarını tüketir.
+*   **Veri Zenginleştirme:** Gelen olaydaki arayan numarası gibi bilgileri kullanarak `user-service`'e gRPC ile danışır ve çağrıyı ilgili kullanıcı/kiracı (tenant) ile ilişkilendirir.
+*   **Ham Olay Kaydı:** Gelen her olayın ham (raw) JSON verisini, denetim (audit) ve detaylı analiz için `call_events` tablosuna kaydeder.
+*   **Özet Kayıt Oluşturma (CDR):** `call.started` ve `call.ended` olaylarını birleştirerek, raporlama için optimize edilmiş, özet bir çağrı kaydını (`calls` tablosu) oluşturur ve günceller.
 
-**Configuration:**
-Refer to `config/` directory and `.env.example` for service-specific configurations, including message queue and database connection details.
+## 🛠️ Teknoloji Yığını
 
-**Deployment:**
-Designed for containerized deployment (e.g., Docker, Kubernetes). Requires a robust persistent database. Refer to `sentiric-infrastructure`.
+*   **Dil:** Go
+*   **Asenkron İletişim:** RabbitMQ (`amqp091-go` kütüphanesi)
+*   **Veritabanı Erişimi:** PostgreSQL (`pgx` kütüphanesi)
+*   **Servisler Arası İletişim:** `user-service`'e gRPC ile.
+*   **Gözlemlenebilirlik:** Prometheus metrikleri ve `zerolog` ile yapılandırılmış loglama.
 
-**Contributing:**
-We welcome contributions! Please refer to the [Sentiric Governance](https://github.com/sentiric/sentiric-governance) repository for coding standards and contribution guidelines.
+## 🔌 API Etkileşimleri
 
-**License:**
-This project is licensed under the [License](LICENSE).
+Bu servis birincil olarak bir **tüketicidir (consumer)**.
+
+*   **Gelen (Tüketici):**
+    *   `RabbitMQ`: `sentiric_events` exchange'inden olayları alır.
+*   **Giden (İstemci):**
+    *   `sentiric-user-service` (gRPC): Arayan numarasını kullanıcı profiliyle eşleştirmek için.
+    *   `PostgreSQL`: `call_events` ve `calls` tablolarına veri yazmak için.
+
+## 🚀 Yerel Geliştirme
+
+1.  **Bağımlılıkları Yükleyin:** `go mod tidy`
+2.  **Ortam Değişkenlerini Ayarlayın:** `.env.docker` dosyasını `.env` olarak kopyalayın. Platformun diğer tüm servisleri Docker üzerinde çalışıyorsa, adresler doğru olacaktır.
+3.  **Servisi Çalıştırın:** `go run ./cmd/cdr-service`
+
+## 🤝 Katkıda Bulunma
+
+Katkılarınızı bekliyoruz! Lütfen projenin ana [Sentiric Governance](https://github.com/sentiric/sentiric-governance) reposundaki kodlama standartlarına ve katkıda bulunma rehberine göz atın.
 
 
-```bash
-go run ./cmd/cdr-service
-```
+---
+## 🏛️ Anayasal Konum
+
+Bu servis, [Sentiric Anayasası'nın (v11.0)](https://github.com/sentiric/sentiric-governance/blob/main/docs/blueprint/Architecture-Overview.md) **Zeka & Orkestrasyon Katmanı**'nda yer alan merkezi bir bileşendir.
