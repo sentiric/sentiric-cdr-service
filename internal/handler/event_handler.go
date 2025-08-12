@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// Olay payload'unu yakalamak için daha detaylı struct'lar
 type EventPayload struct {
 	EventType  string          `json:"eventType"`
 	TraceID    string          `json:"traceId"`
@@ -22,10 +21,11 @@ type EventPayload struct {
 	From       string          `json:"from"`
 	To         string          `json:"to"`
 	Timestamp  time.Time       `json:"timestamp"`
-	RawPayload json.RawMessage `json:"-"` // Orijinal payload'u saklamak için
+	RawPayload json.RawMessage `json:"-"`
 }
 
-var fromUserRegex = regexp.MustCompile(`sip:\+?(\d+)@`)
+// YENİ: SIP URI'sinden telefon numarasını çıkarmak ve normalize etmek için.
+var fromUserRegex = regexp.MustCompile(`sip:(\+?\d+)@`)
 
 type EventHandler struct {
 	db              *sql.DB
@@ -59,20 +59,16 @@ func (h *EventHandler) HandleEvent(body []byte) {
 
 	l.Info().Msg("CDR olayı alındı, işleniyor...")
 
-	// Adım 1: Ham olayı 'call_events' tablosuna yaz (her zaman)
 	if err := h.logRawEvent(l, &event); err != nil {
-		// Hata zaten loglandı, metrik artır ve çık
 		h.eventsFailed.WithLabelValues(event.EventType, "db_raw_insert_failed").Inc()
 		return
 	}
 
-	// Adım 2: Olay tipine göre özet tablosunu işle
 	switch event.EventType {
 	case "call.started":
 		h.handleCallStarted(l, &event)
 	case "call.ended":
-		// Gelecekte eklenecek
-		// h.handleCallEnded(l, &event)
+		h.handleCallEnded(l, &event) // <-- YENİ DURUM
 	default:
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
@@ -90,18 +86,17 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	callerNumber := extractPhoneNumber(event.From)
+	// YENİ: `sip-signaling` ile aynı normalizasyon mantığını kullanıyoruz.
+	callerNumber := extractAndNormalizePhoneNumber(event.From)
 	if callerNumber == "" {
 		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
 		return
 	}
 
-	ctx := context.Background()
-	ctx = metadata.AppendToOutgoingContext(ctx, "x-trace-id", event.TraceID)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-trace-id", event.TraceID)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// user-service'e sorarak kullanıcıyı bul
 	userRes, err := h.userClient.FindUserByContact(ctx, &userv1.FindUserByContactRequest{
 		ContactType:  "phone",
 		ContactValue: callerNumber,
@@ -112,11 +107,9 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 
 	if err != nil {
 		l.Warn().Err(err).Msg("Arayan, user-service'de bulunamadı. Çağrı kaydı kullanıcıyla ilişkilendirilmeyecek.")
-		// Kullanıcı bulunamasa bile kaydı atabiliriz, user_id ve contact_id NULL kalır.
 	} else if userRes.User != nil {
 		userID = sql.NullString{String: userRes.User.Id, Valid: true}
 		tenantID = sql.NullString{String: userRes.User.TenantId, Valid: true}
-		// Eşleşen contact'ı bul
 		for _, c := range userRes.User.Contacts {
 			if c.ContactValue == callerNumber {
 				contactID = sql.NullInt32{Int32: c.Id, Valid: true}
@@ -126,7 +119,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 		l.Info().Str("user_id", userID.String).Msg("Arayan kullanıcı başarıyla bulundu.")
 	}
 
-	// 'calls' tablosuna özet kaydı at
 	query := `
 		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, start_time, status)
 		VALUES ($1, $2, $3, $4, $5, 'STARTED')
@@ -138,14 +130,59 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
 		return
 	}
-
 	l.Info().Msg("Özet çağrı kaydı (CDR) başarıyla oluşturuldu.")
 }
 
-func extractPhoneNumber(fromURI string) string {
-	matches := fromUserRegex.FindStringSubmatch(fromURI)
-	if len(matches) > 1 {
-		return matches[1]
+// YENİ FONKSİYON: Çağrıyı sonlandırır.
+func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
+	var startTime sql.NullTime
+	// Önce çağrının başlangıç zamanını bul
+	err := h.db.QueryRow("SELECT start_time FROM calls WHERE call_id = $1", event.CallID).Scan(&startTime)
+	if err != nil {
+		l.Warn().Err(err).Msg("Çağrı sonlandırma olayı için başlangıç kaydı bulunamadı. Güncelleme atlanıyor.")
+		return
 	}
-	return ""
+
+	duration := int(event.Timestamp.Sub(startTime.Time).Seconds())
+
+	query := `
+		UPDATE calls
+		SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', updated_at = NOW()
+		WHERE call_id = $3
+	`
+	res, err := h.db.Exec(query, event.Timestamp, duration, event.CallID)
+	if err != nil {
+		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) güncellenemedi.")
+		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_update_failed").Inc()
+		return
+	}
+
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		l.Info().Int("duration", duration).Msg("Özet çağrı kaydı (CDR) başarıyla sonlandırıldı ve güncellendi.")
+	}
+}
+
+// YENİ FONKSİYON: SIP URI'sinden telefon numarasını çıkarır ve normalize eder.
+func extractAndNormalizePhoneNumber(uri string) string {
+	matches := fromUserRegex.FindStringSubmatch(uri)
+	if len(matches) < 2 {
+		return ""
+	}
+
+	originalNum := matches[1]
+	var num []rune
+	for _, r := range originalNum {
+		if r >= '0' && r <= '9' {
+			num = append(num, r)
+		}
+	}
+
+	numStr := string(num)
+	if len(numStr) == 11 && numStr[0] == '0' {
+		return "90" + numStr[1:]
+	}
+	if len(numStr) == 10 && numStr[0] != '9' {
+		return "90" + numStr
+	}
+	return numStr
 }

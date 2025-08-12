@@ -35,9 +35,6 @@ services:
       - ./.env.docker
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
-    # ports:
-    #   - "${RABBITMQ_PORT}:${RABBITMQ_PORT}"
-    #   - "15672:15672"      
     networks:
       - sentiric-net
     profiles:
@@ -65,7 +62,6 @@ services:
       - default
       - data
 
-    
   cdr-service:
     build:
       context: .
@@ -74,10 +70,10 @@ services:
         SERVICE_NAME: sentiric-cdr-service
     env_file:
       - ./.env.docker
+    # YENİ EKLENEN SATIR: Sertifika klasörünü konteynere bağlıyoruz.
     volumes:
       - ../sentiric-config/tls/certs:/etc/sentiric/tls:ro
     ports:
-      # Metriklerin Prometheus tarafından okunabilmesi için
       - "${METRICS_PORT:-9092}:${METRICS_PORT:-9092}"    
       - "${CDR_SERVICE_PORT}:${CDR_SERVICE_PORT}"
     networks:
@@ -86,10 +82,8 @@ services:
       - app
       - default
     restart: always
-
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy    
-        
