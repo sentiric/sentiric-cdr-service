@@ -34,7 +34,7 @@ func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.
 	return nil, nil
 }
 
-func StartConsumer(ctx context.Context, ch *amqp091.Channel, queueName string, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
+func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
 	err := ch.ExchangeDeclare(
 		exchangeName,
 		"fanout",

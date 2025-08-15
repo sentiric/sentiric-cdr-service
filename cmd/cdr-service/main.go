@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sentiric/sentiric-cdr-service/internal/client" // YENİ
+	"github.com/sentiric/sentiric-cdr-service/internal/client"
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
 	"github.com/sentiric/sentiric-cdr-service/internal/handler"
@@ -38,13 +38,11 @@ func main() {
 	}
 	defer db.Close()
 
-	// YENİ: User Service istemcisini oluşturuyoruz.
 	userClient, err := client.NewUserServiceClient(cfg)
 	if err != nil {
 		appLog.Fatal().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı")
 	}
 
-	// YENİ: İstemciyi event handler'a enjekte ediyoruz.
 	eventHandler := handler.NewEventHandler(db, userClient, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 	rabbitCh, closeChan := queue.Connect(cfg.RabbitMQURL, appLog)
@@ -55,7 +53,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
-	go queue.StartConsumer(ctx, rabbitCh, cfg.QueueName, eventHandler.HandleEvent, appLog, &wg)
+	// DÜZELTME: Artık kullanılmayan cfg.QueueName'i kaldırıyoruz.
+	go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &wg)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
