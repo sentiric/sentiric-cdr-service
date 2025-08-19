@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	// DÜZELTME BURADA: "github.comcom" -> "github.com"
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
 	"google.golang.org/grpc"
