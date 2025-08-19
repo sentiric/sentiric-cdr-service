@@ -12,7 +12,8 @@ type Config struct {
 	Env         string
 	PostgresURL string
 	RabbitMQURL string
-	QueueName   string
+	// DÜZELTME: QueueName artık kod içinde sabit olduğu için bu alana gerek kalmadı.
+	// QueueName   string
 	MetricsPort string
 
 	// gRPC İstemci Ayarları
@@ -26,10 +27,11 @@ func Load() (*Config, error) {
 	godotenv.Load()
 
 	cfg := &Config{
-		Env:                getEnvWithDefault("ENV", "production"),
-		PostgresURL:        getEnv("POSTGRES_URL"),
-		RabbitMQURL:        getEnv("RABBITMQ_URL"),
-		QueueName:          getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
+		Env:         getEnvWithDefault("ENV", "production"),
+		PostgresURL: getEnv("POSTGRES_URL"),
+		RabbitMQURL: getEnv("RABBITMQ_URL"),
+		// DÜZELTME: Artık bu satıra gerek yok.
+		// QueueName:          getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
 		MetricsPort:        getEnvWithDefault("METRICS_PORT", "9092"),
 		UserServiceGrpcURL: getEnv("USER_SERVICE_GRPC_URL"),
 		CdrServiceCertPath: getEnv("CDR_SERVICE_CERT_PATH"),
