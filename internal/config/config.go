@@ -32,7 +32,7 @@ func Load() (*Config, error) {
 		RabbitMQURL: getEnv("RABBITMQ_URL"),
 		// DÜZELTME: Artık bu satıra gerek yok.
 		// QueueName:          getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
-		MetricsPort:        getEnvWithDefault("METRICS_PORT", "9092"),
+		MetricsPort:        getEnvWithDefault("METRICS_PORT_CDR", "9092"),
 		UserServiceGrpcURL: getEnv("USER_SERVICE_GRPC_URL"),
 		CdrServiceCertPath: getEnv("CDR_SERVICE_CERT_PATH"),
 		CdrServiceKeyPath:  getEnv("CDR_SERVICE_KEY_PATH"),
