@@ -16,18 +16,21 @@ Bu faz, servisin temel çağrı olaylarını kaydedip özet bir CDR oluşturabil
 
 ---
 
-### Faz 2: Gelişmiş Analitik ve Raporlama (Sıradaki Öncelik)
-
-Bu faz, toplanan veriden anlamlı iş metrikleri çıkarmayı ve bunları sunmayı hedefler.
+### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi**
 
 -   [ ] **Görev ID: CDR-001 - gRPC Raporlama Endpoint'leri**
-    -   **Açıklama:** `dashboard-ui`'nin ihtiyaç duyacağı verileri sunmak için gRPC endpoint'leri oluştur. Örnekler: `GetCallsByTenant`, `GetAverageCallDuration`, `GetCallVolumeReport`.
-    -   **Durum:** ⬜ Planlandı.
+    -   **Açıklama:** `dashboard-ui` gibi yönetim araçlarının çağrı geçmişini ve temel istatistikleri sorgulayabilmesi için gRPC endpoint'leri oluştur.
+    -   **Kabul Kriterleri:**
+        -   [ ] `GetCallsByTenant(tenant_id, page, limit)` RPC'si implemente edilmeli.
+        -   [ ] `GetCallDetails(call_id)` RPC'si, bir çağrının tüm ham olaylarını (`call_events`) döndürmeli.
+        -   [ ] `GetCallMetrics(tenant_id, time_range)` RPC'si, toplam arama sayısı ve ortalama konuşma süresi gibi temel metrikleri sağlamalı.
 
 -   [ ] **Görev ID: CDR-002 - Diğer Olayları İşleme**
     -   **Açıklama:** `call.answered`, `call.transferred` gibi daha detaylı olayları işleyerek `calls` tablosunu zenginleştir. Bu, bir çağrının ne kadar sürede cevaplandığı gibi metrikleri hesaplamayı sağlar.
     -   **Durum:** ⬜ Planlandı.
 
--   [ ] **Görev ID: CDR-003 - Veri Arşivleme ve Temizleme**
-    -   **Açıklama:** Çok eski ham olayları (`call_events`) periyodik olarak daha ucuz bir depolama alanına (örn: AWS S3/Glacier) arşivleyen ve veritabanından silen bir arka plan görevi oluştur.
+### **FAZ 3: Optimizasyon**
+
+-   [ ] **Görev ID: CDR-003 - Veri Arşivleme**
+    -   **Açıklama:** Çok eski ham olayları (`call_events`) periyodik olarak daha ucuz bir depolama alanına (örn: S3) arşivleyen ve veritabanından silen bir arka plan görevi oluştur.
     -   **Durum:** ⬜ Planlandı.
