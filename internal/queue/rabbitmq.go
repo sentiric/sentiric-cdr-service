@@ -1,4 +1,5 @@
-// ========== FILE: sentiric-cdr-service/internal/queue/rabbitmq.go (Dayanıklı Mimarisi) ==========
+// File: sentiric-cdr-service/internal/queue/rabbitmq.go
+
 package queue
 
 import (
@@ -12,11 +13,11 @@ import (
 
 const (
 	exchangeName = "sentiric_events"
-	// YENİ MİMARİ: CDR için kalıcı ve bilinen bir kuyruk adı tanımlıyoruz.
 	cdrQueueName = "sentiric.cdr_service.events"
 )
 
 func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.Error) {
+
 	var conn *amqp091.Connection
 	var err error
 	for i := 0; i < 10; i++ {
@@ -40,35 +41,34 @@ func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.
 
 func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
 	err := ch.ExchangeDeclare(
-		exchangeName, // name
-		"fanout",     // type
-		true,         // durable
-		false,        // auto-deleted
-		false,        // internal
-		false,        // no-wait
-		nil,          // arguments
+		exchangeName,
+		"topic", // <<< DEĞİŞİKLİK BURADA: 'fanout' -> 'topic'
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		log.Fatal().Err(err).Str("exchange", exchangeName).Msg("Exchange deklare edilemedi")
 	}
 
-	// YENİ MİMARİ: Geçici ve isimsiz kuyruk yerine, kalıcı ve bilinen bir kuyruk oluşturuyoruz.
 	q, err := ch.QueueDeclare(
-		cdrQueueName, // name: Artık bilinen bir ismimiz var.
-		true,         // durable: RabbitMQ yeniden başlasa bile kuyruk kaybolmaz.
-		false,        // delete when unused: Tüketici olmasa bile silinmez.
-		false,        // exclusive: Birden fazla CDR instance'ı aynı kuyruğu dinleyebilir (ölçeklenme için).
-		false,        // no-wait
-		nil,          // arguments
+		cdrQueueName,
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Kalıcı CDR kuyruğu oluşturulamadı")
 	}
 
 	err = ch.QueueBind(
-		q.Name,       // queue name
-		"",           // routing key
-		exchangeName, // exchange
+		q.Name,
+		"#", // <<< DEĞİŞİKLİK BURADA: "" -> "#" (tüm konuları dinle)
+		exchangeName,
 		false,
 		nil,
 	)
@@ -78,21 +78,19 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 
 	log.Info().Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kalıcı kuyruk başarıyla exchange'e bağlandı.")
 
-	// YENİ MİMARİ: Prefetch ayarı, bir worker'ın aynı anda sadece 1 mesaj almasını sağlar.
-	// Bu, mesajı işleyip onayladıktan sonra yenisini isteyeceği anlamına gelir.
 	err = ch.Qos(1, 0, false)
 	if err != nil {
 		log.Fatal().Err(err).Msg("QoS ayarı yapılamadı.")
 	}
 
 	msgs, err := ch.Consume(
-		q.Name, // queue
-		"",     // consumer
-		false,  // auto-ack: DEĞİŞTİRİLDİ! Mesajları manuel onaylayacağız.
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
+		q.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Mesajlar tüketilemedi")
@@ -113,9 +111,7 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 			wg.Add(1)
 			go func(msg amqp091.Delivery) {
 				defer wg.Done()
-				// Handler'ı çalıştır.
 				handlerFunc(msg.Body)
-				// Handler başarıyla tamamlandıktan sonra mesajı RabbitMQ'dan silmesi için onay gönder.
 				_ = msg.Ack(false)
 			}(d)
 		}
