@@ -1,18 +1,13 @@
-// ========== FILE: sentiric-cdr-service/internal/handler/event_handler.go ==========
 package handler
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
-	"regexp"
-	"strings"
+	"encoding/json" // regexp yerine bu yeterli
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
-	"google.golang.org/grpc/metadata"
 )
 
 type EventPayload struct {
@@ -25,8 +20,15 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
-// YENİ: Telefon numarasını parse etmek için global regex
-var fromUserRegex = regexp.MustCompile(`sip:(\+?\d+)@`)
+// YENİ: agent-service'ten gelecek olay için payload
+type UserIdentifiedPayload struct {
+	EventType string `json:"eventType"`
+	TraceID   string `json:"traceId"`
+	CallID    string `json:"callId"`
+	UserID    string `json:"userId"`
+	ContactID int32  `json:"contactId"`
+	TenantID  string `json:"tenantId"`
+}
 
 type EventHandler struct {
 	db              *sql.DB
@@ -70,6 +72,9 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallStarted(l, &event)
 	case "call.ended":
 		h.handleCallEnded(l, &event)
+	// YENİ CASE
+	case "user.created.for_call":
+		h.handleUserIdentified(l, body)
 	default:
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
@@ -87,61 +92,20 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// Arayan numarasını SIP URI'sinden basitçe çıkar. Normalizasyon işini user-service yapacak.
-	var callerNumber string
-	if strings.Contains(event.From, "<sip:") {
-		// Örnek: <sip:05548777858@194.48.95.2> -> 05548777858
-		parts := strings.Split(strings.Split(event.From, "<sip:")[1], "@")[0]
-		callerNumber = parts
-	} else {
-		l.Warn().Str("from_header", event.From).Msg("Beklenmedik 'From' başlığı formatı, numara çıkarılamadı.")
-		return
-	}
-
-	if callerNumber == "" {
-		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
-		return
-	}
-
-	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-trace-id", event.TraceID)
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	userRes, err := h.userClient.FindUserByContact(ctx, &userv1.FindUserByContactRequest{
-		ContactType:  "phone",
-		ContactValue: callerNumber,
-	})
-
-	var userID, tenantID sql.NullString
-	var contactID sql.NullInt32
-
-	if err != nil {
-		l.Warn().Err(err).Msg("Arayan, user-service'de bulunamadı. Çağrı kaydı kullanıcıyla ilişkilendirilmeyecek.")
-	} else if userRes.User != nil {
-		userID = sql.NullString{String: userRes.User.Id, Valid: true}
-		tenantID = sql.NullString{String: userRes.User.TenantId, Valid: true}
-		for _, c := range userRes.User.Contacts {
-			if c.ContactValue == callerNumber {
-				contactID = sql.NullInt32{Int32: c.Id, Valid: true}
-				break
-			}
-		}
-		l.Info().Str("user_id", userID.String).Msg("Arayan kullanıcı başarıyla bulundu.")
-	}
-
+	// ARTIK SADECE BAŞLANGIÇ KAYDINI ATIYORUZ
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
 	query := `
-		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, start_time, status)
-		VALUES ($1, $2, $3, $4, $5, 'STARTED')
+		INSERT INTO calls (call_id, start_time, status)
+		VALUES ($1, $2, 'STARTED')
 		ON CONFLICT (call_id) DO NOTHING
 	`
-	_, err = h.db.Exec(query, event.CallID, userID, contactID, tenantID, event.Timestamp)
+	_, err := h.db.Exec(query, event.CallID, event.Timestamp)
 	if err != nil {
-		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) veritabanına yazılamadı.")
+		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi veritabanına yazılamadı.")
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
 		return
 	}
-	l.Info().Msg("Özet çağrı kaydı (CDR) başarıyla oluşturuldu.")
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
 }
 
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
@@ -173,27 +137,35 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 }
 
-// // YENİ: Numarayı normalize eden yardımcı fonksiyon
-// func extractAndNormalizePhoneNumber(uri string) string {
-// 	matches := fromUserRegex.FindStringSubmatch(uri)
-// 	if len(matches) < 2 {
-// 		return ""
-// 	}
+// YENİ FONKSİYON
+func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
+	var payload UserIdentifiedPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		l.Error().Err(err).Msg("user.created.for_call olayı parse edilemedi.")
+		h.eventsFailed.WithLabelValues("user.created.for_call", "json_unmarshal").Inc()
+		return
+	}
 
-// 	originalNum := matches[1]
-// 	var num []rune
-// 	for _, r := range originalNum {
-// 		if r >= '0' && r <= '9' {
-// 			num = append(num, r)
-// 		}
-// 	}
+	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
+	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor.")
 
-// 	numStr := string(num)
-// 	if len(numStr) == 11 && numStr[0] == '0' {
-// 		return "90" + numStr[1:]
-// 	}
-// 	if len(numStr) == 10 && numStr[0] != '9' {
-// 		return "90" + numStr
-// 	}
-// 	return numStr
-// }
+	query := `
+		UPDATE calls
+		SET user_id = $1, contact_id = $2, tenant_id = $3, updated_at = NOW()
+		WHERE call_id = $4
+	`
+	res, err := h.db.Exec(query, payload.UserID, payload.ContactID, payload.TenantID, payload.CallID)
+	if err != nil {
+		l.Error().Err(err).Msg("CDR kullanıcı bilgileriyle güncellenemedi.")
+		h.eventsFailed.WithLabelValues(payload.EventType, "db_summary_update_failed").Inc()
+		return
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		l.Info().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla güncellendi.")
+	} else {
+		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı (muhtemelen çağrı çoktan bitti).")
+	}
+}
+
+// Artık bu fonksiyona gerek yok, silebilirsin.
+// func extractAndNormalizePhoneNumber(uri string) string { ... }

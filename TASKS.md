@@ -29,12 +29,23 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
     -   **Durum:** ✅ **Tamamlandı**
     -   **Not:** Bu düzeltme, kayıtlı kullanıcıların "misafir" olarak algılanması sorununu çözerek veri tutarlılığını sağlamıştır.
 
+-   [x] **Görev ID: CDR-BUG-01 - Telefon Numarası Normalizasyonu**
+    -   **Durum:** ✅ **Tamamlandı** (Ancak `user-service`'e taşındığı için bu servisten kaldırıldı).
+
 ---
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
 
 **Amaç:** Platform yöneticileri ve kullanıcıları için zengin raporlama ve analiz yetenekleri sunmak.
+-   [x] **Görev ID: CDR-004 - Olay Tabanlı CDR Zenginleştirme (KRİTİK DÜZELTME)**
+    -   **Açıklama:** `call.started` olayında artık kullanıcı bilgisi aranmıyor. Bunun yerine, `agent-service` tarafından yayınlanan `user.created.for_call` olayı dinlenerek, mevcut `calls` kaydı `user_id` ve `contact_id` ile asenkron olarak güncelleniyor.
+    -   **Durum:** ✅ **Tamamlandı**
+    -   **Not:** Bu değişiklik, `agent-service` ile `cdr-service` arasındaki yarış durumunu (race condition) tamamen ortadan kaldırır.
 
+-   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
+    -   **Açıklama:** `media-service` tarafından yayınlanacak olan `call.recording.available` olayını dinleyerek, ilgili `calls` kaydının `recording_url` alanını güncelle.
+    -   **Durum:** ⬜ Planlandı (MEDIA-004'e bağımlı).
+        
 -   [ ] **Görev ID: CDR-001 - gRPC Raporlama Endpoint'leri**
     -   **Açıklama:** `dashboard-ui` gibi yönetim araçlarının çağrı geçmişini ve temel istatistikleri sorgulayabilmesi için gRPC endpoint'leri oluştur.
     -   **Kabul Kriterleri:**
