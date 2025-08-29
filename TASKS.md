@@ -1,22 +1,39 @@
-# 📊 Sentiric CDR Service - Görev Listesi
+# 📊 Sentiric CDR Service - Görev Listesi (v1.1 - Veri Tutarlılığı)
 
 Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanımlar.
 
 ---
 
-### Faz 1: Temel Kayıt ve Raporlama (Mevcut Durum)
+### **FAZ 1: Temel Kayıt ve Raporlama (Mevcut Durum)**
 
-Bu faz, servisin temel çağrı olaylarını kaydedip özet bir CDR oluşturabilmesini hedefler.
+**Amaç:** Servisin temel çağrı olaylarını kaydedip özet bir CDR oluşturabilmesini sağlamak.
 
--   [x] **RabbitMQ Tüketicisi:** `sentiric_events` exchange'inden tüm olayları dinleme.
--   [x] **Ham Olay Kaydı:** Gelen her olayı `call_events` tablosuna yazma.
--   [x] **Özet CDR Oluşturma:** `call.started` olayında `calls` tablosuna yeni bir kayıt ekleme.
--   [x] **Özet CDR Güncelleme:** `call.ended` olayında ilgili kaydı bulup `end_time` ve `duration` alanlarını güncelleme.
--   [x] **Kullanıcı İlişkilendirme:** `call.started` olayındaki arayan numarasını kullanarak `user-service`'e danışma ve `user_id` ile `tenant_id`'yi `calls` tablosuna kaydetme.
+-   [x] **Görev ID: CDR-CORE-01 - RabbitMQ Tüketicisi**
+    -   **Açıklama:** `sentiric_events` exchange'inden tüm olayları dinleme.
+    -   **Durum:** ✅ **Tamamlandı**
+
+-   [x] **Görev ID: CDR-CORE-02 - Ham Olay Kaydı**
+    -   **Açıklama:** Gelen her olayı `call_events` tablosuna yazma.
+    -   **Durum:** ✅ **Tamamlandı**
+
+-   [x] **Görev ID: CDR-CORE-03 - Özet CDR Oluşturma ve Güncelleme**
+    -   **Açıklama:** `call.started` olayında `calls` tablosuna yeni bir kayıt ekleme ve `call.ended` olayında ilgili kaydı `end_time` ve `duration` ile güncelleme.
+    -   **Durum:** ✅ **Tamamlandı**
+
+-   [x] **Görev ID: CDR-CORE-04 - Kullanıcı İlişkilendirme**
+    -   **Açıklama:** `call.started` olayındaki arayan numarasını kullanarak `user-service`'e danışma ve `user_id` ile `tenant_id`'yi `calls` tablosuna kaydetme.
+    -   **Durum:** ✅ **Tamamlandı**
+
+-   [x] **Görev ID: CDR-BUG-01 - Telefon Numarası Normalizasyonu (KRİTİK DÜZELTME)**
+    -   **Açıklama:** `user-service`'i sorgulamadan önce, SIP `From` başlığından gelen telefon numarasını standart E.164 (`90...`) formatına çeviren bir mantık eklendi.
+    -   **Durum:** ✅ **Tamamlandı**
+    -   **Not:** Bu düzeltme, kayıtlı kullanıcıların "misafir" olarak algılanması sorununu çözerek veri tutarlılığını sağlamıştır.
 
 ---
 
-### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi**
+### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
+
+**Amaç:** Platform yöneticileri ve kullanıcıları için zengin raporlama ve analiz yetenekleri sunmak.
 
 -   [ ] **Görev ID: CDR-001 - gRPC Raporlama Endpoint'leri**
     -   **Açıklama:** `dashboard-ui` gibi yönetim araçlarının çağrı geçmişini ve temel istatistikleri sorgulayabilmesi için gRPC endpoint'leri oluştur.

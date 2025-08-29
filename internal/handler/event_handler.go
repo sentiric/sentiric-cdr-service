@@ -24,6 +24,7 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
+// YENİ: Telefon numarasını parse etmek için global regex
 var fromUserRegex = regexp.MustCompile(`sip:(\+?\d+)@`)
 
 type EventHandler struct {
@@ -85,6 +86,7 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
+	// DEĞİŞİKLİK: Numarayı normalize eden fonksiyonu çağır
 	callerNumber := extractAndNormalizePhoneNumber(event.From)
 	if callerNumber == "" {
 		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
@@ -160,6 +162,7 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 }
 
+// YENİ: Numarayı normalize eden yardımcı fonksiyon
 func extractAndNormalizePhoneNumber(uri string) string {
 	matches := fromUserRegex.FindStringSubmatch(uri)
 	if len(matches) < 2 {
