@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -86,14 +87,24 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// DEĞİŞİKLİK: Numarayı normalize eden fonksiyonu çağır
-	callerNumber := extractAndNormalizePhoneNumber(event.From)
+	// Arayan numarasını SIP URI'sinden basitçe çıkar. Normalizasyon işini user-service yapacak.
+	var callerNumber string
+	if strings.Contains(event.From, "<sip:") {
+		// Örnek: <sip:05548777858@194.48.95.2> -> 05548777858
+		parts := strings.Split(strings.Split(event.From, "<sip:")[1], "@")[0]
+		callerNumber = parts
+	} else {
+		l.Warn().Str("from_header", event.From).Msg("Beklenmedik 'From' başlığı formatı, numara çıkarılamadı.")
+		return
+	}
+
 	if callerNumber == "" {
 		l.Warn().Msg("Arayan numarası 'From' URI'sinden çıkarılamadı, özet CDR oluşturulmayacak.")
 		return
 	}
 
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-trace-id", event.TraceID)
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -162,27 +173,27 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 }
 
-// YENİ: Numarayı normalize eden yardımcı fonksiyon
-func extractAndNormalizePhoneNumber(uri string) string {
-	matches := fromUserRegex.FindStringSubmatch(uri)
-	if len(matches) < 2 {
-		return ""
-	}
+// // YENİ: Numarayı normalize eden yardımcı fonksiyon
+// func extractAndNormalizePhoneNumber(uri string) string {
+// 	matches := fromUserRegex.FindStringSubmatch(uri)
+// 	if len(matches) < 2 {
+// 		return ""
+// 	}
 
-	originalNum := matches[1]
-	var num []rune
-	for _, r := range originalNum {
-		if r >= '0' && r <= '9' {
-			num = append(num, r)
-		}
-	}
+// 	originalNum := matches[1]
+// 	var num []rune
+// 	for _, r := range originalNum {
+// 		if r >= '0' && r <= '9' {
+// 			num = append(num, r)
+// 		}
+// 	}
 
-	numStr := string(num)
-	if len(numStr) == 11 && numStr[0] == '0' {
-		return "90" + numStr[1:]
-	}
-	if len(numStr) == 10 && numStr[0] != '9' {
-		return "90" + numStr
-	}
-	return numStr
-}
+// 	numStr := string(num)
+// 	if len(numStr) == 11 && numStr[0] == '0' {
+// 		return "90" + numStr[1:]
+// 	}
+// 	if len(numStr) == 10 && numStr[0] != '9' {
+// 		return "90" + numStr
+// 	}
+// 	return numStr
+// }
