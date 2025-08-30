@@ -53,6 +53,17 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
 
+-   [ ] **Görev ID: CDR-REFACTOR-01 - Yarış Durumunu Ortadan Kaldırma (KRİTİK)**
+    -   **Durum:** ⬜ Planlandı
+    -   **Bağımlılık:** `AGENT-BUG-04`'ün tamamlanmasına bağlı.
+    -   **Tahmini Süre:** ~1 saat
+    -   **Açıklama:** `call.started` olayında kullanıcı bilgisi arama mantığını tamamen kaldırarak yarış durumu (race condition) sorununu kökünden çözmek. Kullanıcı kimliği bilgisi artık `user.identified.for_call` olayı ile asenkron olarak alınacaktır.
+    -   **Kabul Kriterleri:**
+        -   [ ] `handleCallStarted` fonksiyonu, artık `user-service`'i çağırmamalıdır. Sadece `call_id` ve `start_time` ile temel bir kayıt oluşturmalıdır.
+        -   [ ] `handleUserIdentified` adında yeni bir olay işleyici fonksiyon oluşturulmalıdır.
+        -   [ ] Bu yeni fonksiyon, `user.identified.for_call` olayını dinlemeli, payload'dan `user_id`, `contact_id` ve `tenant_id`'yi almalı ve ilgili `calls` kaydını `UPDATE` etmelidir.
+        -   [ ] Test çağrısı sonunda `calls` tablosundaki ilgili kaydın `user_id` alanının `null` olmadığı doğrulanmalıdır.
+
 **Amaç:** Platform yöneticileri ve kullanıcıları için zengin raporlama ve analiz yetenekleri sunmak.
 -   [x] **Görev ID: CDR-004 - Olay Tabanlı CDR Zenginleştirme (KRİTİK DÜZELTME)**
     -   **Açıklama:** `call.started` olayında artık kullanıcı bilgisi aranmıyor. Bunun yerine, `agent-service` tarafından yayınlanan `user.created.for_call` olayı dinlenerek, mevcut `calls` kaydı `user_id` ve `contact_id` ile asenkron olarak güncelleniyor.
@@ -97,6 +108,15 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
         -   [ ] Bir test çağrısı sonunda, veritabanında `full_transcript` sütununun konuşmanın metnini içerdiği doğrulanmalıdır.    
 
 ### **FAZ 3: Optimizasyon**
+
+-   [ ] **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
+    -   **Durum:** ⬜ Planlandı
+    -   **Bağımlılık:** `CDR-REFACTOR-01` ve `SIG-BUG-01`'in çözülmesine bağlı.
+    -   **Açıklama:** Platformun ticari değerini artırmak için çağrı başına maliyet hesaplama yeteneği eklemek.
+    -   **Kabul Kriterleri:**
+        -   [ ] `calls` tablosuna `cost` (NUMERIC) ve `tenants` tablosuna `cost_per_minute` (NUMERIC) sütunları eklenmeli.
+        -   [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup, `duration_seconds` ile çarparak `cost` alanını hesaplamalı ve kaydetmelidir.
+        
 
 -   [ ] **Görev ID: CDR-003 - Veri Arşivleme**
     -   **Açıklama:** Çok eski ham olayları (`call_events`) periyodik olarak daha ucuz bir depolama alanına (örn: S3) arşivleyen ve veritabanından silen bir arka plan görevi oluştur.
