@@ -1,4 +1,4 @@
-# 📊 Sentiric CDR Service - Görev Listesi (v1.1 - Veri Tutarlılığı)
+# 📊 Sentiric CDR Service - Görev Listesi (v1.2 - Veri Bütünlüğü)
 
 Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanımlar.
 
@@ -42,10 +42,22 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
     -   **Durum:** ✅ **Tamamlandı**
     -   **Not:** Bu değişiklik, `agent-service` ile `cdr-service` arasındaki yarış durumunu (race condition) tamamen ortadan kaldırır.
 
--   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
-    -   **Açıklama:** `media-service` tarafından yayınlanacak olan `call.recording.available` olayını dinleyerek, ilgili `calls` kaydının `recording_url` alanını güncelle.
-    -   **Durum:** ⬜ Planlandı (MEDIA-004'e bağımlı).
-        
+
+-   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama (YÜKSEK ÖNCELİK)**
+    -   **Durum:** ⬜ Planlandı
+    -   **Bağımlılık:** `MEDIA-004`'ün tamamlanmasına bağlı.
+    -   **Tahmini Süre:** ~1-2 saat
+    -   **Açıklama:** `media-service` tarafından yayınlanacak olan `call.recording.available` olayını dinleyerek, ilgili `calls` kaydının `recording_url` alanını S3 URI'si ile güncellemek.
+    -   **Kabul Kriterleri:**
+        -   [ ] `cdr-service`'in `event_handler`'ı, `call.recording.available` olayını işleyecek yeni bir case içermelidir.
+        -   [ ] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütununun güncellendiği doğrulanmalıdır.
+
+-   [ ] **Görev ID: CDR-BUG-02 - Boş Event Type Sorununu Araştırma**
+    -   **Durum:** ⬜ Planlandı (Düşük Öncelik)
+    -   **Açıklama:** Test loglarında `event_type` alanı boş olan bir olay kaydedildiği görüldü. Bu, muhtemelen `agent-service`'in çökmesinin bir yan etkisidir. Ana hata (`AGENT-BUG-02`) giderildikten sonra bu sorunun devam edip etmediğini gözlemlemek.
+    -   **Kabul Kriterleri:**
+        -   [ ] Ana diyalog akışı düzeltildikten sonra, `call_events` tablosunda artık `event_type` alanı boş olan kayıtların oluşmadığı doğrulanmalıdır.
+
 -   [ ] **Görev ID: CDR-001 - gRPC Raporlama Endpoint'leri**
     -   **Açıklama:** `dashboard-ui` gibi yönetim araçlarının çağrı geçmişini ve temel istatistikleri sorgulayabilmesi için gRPC endpoint'leri oluştur.
     -   **Kabul Kriterleri:**
