@@ -1,4 +1,4 @@
-# 📊 Sentiric CDR Service - Görev Listesi (v1.2 - Veri Bütünlüğü)
+# 📊 Sentiric CDR Service - Görev Listesi (v1.3 - Zenginleştirilmiş Kayıt)
 
 Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanımlar.
 
@@ -68,6 +68,16 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 -   [ ] **Görev ID: CDR-002 - Diğer Olayları İşleme**
     -   **Açıklama:** `call.answered`, `call.transferred` gibi daha detaylı olayları işleyerek `calls` tablosunu zenginleştir. Bu, bir çağrının ne kadar sürede cevaplandığı gibi metrikleri hesaplamayı sağlar.
     -   **Durum:** ⬜ Planlandı.
+
+-   [ ] **Görev ID: CDR-002 - Zengin Diyalog Olaylarını İşleme (YENİ)**
+    -   **Durum:** ⬜ Planlandı
+    -   **Bağımlılık:** `AGENT-EVENT-01`'in tamamlanmasına bağlı.
+    -   **Tahmini Süre:** ~1 gün
+    -   **Açıklama:** `agent-service` tarafından yayınlanacak olan `call.transcription.available` gibi yeni olay türlerini dinleyerek, bu verileri `calls` tablosundaki ilgili kayda eklemek (örn: tam transkripti bir JSONB sütununa yazmak) veya analiz için ayrı tablolara işlemek.
+    -   **Kabul Kriterleri:**
+        -   [ ] `calls` tablosuna `full_transcript` adında bir `JSONB` sütunu eklenmelidir.
+        -   [ ] `cdr-service`, `call.transcription.available` olayını aldığında, olaydaki metni ilgili `call_id`'ye sahip kaydın `full_transcript` sütununa eklemelidir.
+        -   [ ] Bir test çağrısı sonunda, veritabanında `full_transcript` sütununun konuşmanın metnini içerdiği doğrulanmalıdır.    
 
 ### **FAZ 3: Optimizasyon**
 
