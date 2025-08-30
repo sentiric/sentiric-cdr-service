@@ -32,6 +32,23 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 -   [x] **Görev ID: CDR-BUG-01 - Telefon Numarası Normalizasyonu**
     -   **Durum:** ✅ **Tamamlandı** (Ancak `user-service`'e taşındığı için bu servisten kaldırıldı).
 
+-   [ ] **Görev ID:** `CDR-BUG-02` / `AGENT-BUG-04`
+    -   **Açıklama:** `cdr-service`'in `call.started` olayında kullanıcı bilgisi aramaktan vazgeçmesini sağla. Bunun yerine, `agent-service`'in, bir misafir kullanıcıyı oluşturduktan veya mevcut bir kullanıcıyı bulduktan sonra, `user_id`, `contact_id` ve `tenant_id` içeren yeni bir `user.identified.for_call` olayı yayınlamasını sağla. `cdr-service` bu yeni olayı dinleyerek mevcut `calls` kaydını güncellemeli.
+    -   **Kabul Kriterleri:**
+        *   [ ] `sentiric-contracts`'e yeni `UserIdentifiedForCallEvent` mesajı eklenmeli.
+        *   [ ] `agent-service`, kullanıcıyı bulduktan/oluşturduktan sonra bu olayı yayınlamalı.
+        *   [ ] `cdr-service`, bu olayı dinleyip ilgili `calls` satırını `UPDATE` etmeli.
+        *   [ ] Test çağrısı sonunda `calls` tablosundaki `user_id`, `contact_id` ve `tenant_id` alanlarının doğru bir şekilde doldurulduğu doğrulanmalıdır.
+
+- [ ] **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
+    - **Durum:** ⬜ Planlandı
+    - **Bağımlılık:** `CDR-BUG-02` ve `SIG-BUG-01`'in çözülmesine bağlı.
+    - **Açıklama:** `calls` tablosuna `cost` (NUMERIC) adında bir sütun ekle. `tenants` tablosuna `cost_per_minute` gibi bir alan ekle. `call.ended` olayı işlenirken, çağrının `duration_seconds` ve ilgili `tenant`'ın dakika başına maliyetine göre `cost` alanını hesapla ve kaydet.
+    - **Kabul Kriterleri:**
+        - [ ] Veritabanı şeması güncellenmeli.
+        - [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup hesaplama yapmalı.
+        - [ ] Test çağrısı sonunda `cost` alanının doğru bir şekilde doldurulduğu doğrulanmalıdır.
+
 ---
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
