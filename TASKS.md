@@ -43,7 +43,7 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 - [ ] **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
     - **Durum:** ⬜ Planlandı
     - **Bağımlılık:** `CDR-BUG-02` ve `SIG-BUG-01`'in çözülmesine bağlı.
-    - **Açıklama:** `calls` tablosuna `cost` (NUMERIC) adında bir sütun ekle. `tenants` tablosuna `cost_per_minute` gibi bir alan ekle. `call.ended` olayı işlenirken, çağrının `duration_seconds` ve ilgili `tenant`'ın dakika başına maliyetine göre `cost` alanını hesapla ve kaydet.
+    - **Açıklama:** `calls` tablosuna `cost` (NUMERIC) adında bir sütun ekle. `tenants` tablosuna `cost_per_second` gibi bir alan ekle. `call.ended` olayı işlenirken, çağrının `duration_seconds` ve ilgili `tenant`'ın dakika başına maliyetine göre `cost` alanını hesapla ve kaydet.
     - **Kabul Kriterleri:**
         - [ ] Veritabanı şeması güncellenmeli.
         - [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup hesaplama yapmalı.
