@@ -2,6 +2,27 @@
 
 Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanımlar.
 
+
+# Görev Tanımı: Çağrı Kayıtlarını Dinleme Özelliği Entegrasyonu
+
+-   **Servis:** `cdr-service` (veya ilgili arayüz servisi)
+-   **Bağımlılık:** `media-service`'teki `MEDIA-FEAT-02` görevinin tamamlanması.
+-   **Amaç:** Kullanıcıların (yöneticiler, kalite ekipleri vb.) web arayüzü üzerinden bir çağrının ses kaydını doğal ve anlaşılır bir şekilde dinlemesini sağlamak.
+-   **Mevcut Durum:** Çağrı kayıtları S3'te teknik bir formatta saklanmaktadır. Bu formatın doğrudan oynatılması, kötü bir kullanıcı deneyimi sunar.
+-   **Yeni Mimari:**
+    1.  `media-service` artık `GetPlayableRecording` adında yeni bir gRPC streaming RPC'si sunmaktadır.
+    2.  Bu RPC, S3'teki bir kaydın URI'sini alıp, anlık olarak dönüştürülmüş ve "dinlenebilir" bir ses akışı (stream) döndürür.
+-   **Uygulama Adımları:**
+    -   [ ] **1. Arayüz (Frontend):** Çağrı detayları sayfasında, ses kaydı mevcutsa bir "Oynat" butonu ve HTML `<audio>` elementi gösterilmelidir.
+    -   [ ] **2. Backend (`cdr-service`):**
+        -   [ ] Frontend'den gelen "kaydı oynat" isteği için yeni bir HTTP endpoint'i (`/api/calls/{call_id}/recording/play`) oluşturulmalıdır.
+        -   [ ] Bu endpoint tetiklendiğinde, `cdr-service` ilgili çağrının `recording_uri`'sini veritabanından okumalıdır.
+        -   [ ] `media-service`'in `GetPlayableRecording` RPC'sine bu URI ile bir istek gönderilmelidir.
+        -   [ ] `media-service`'ten gelen ses akışı (gRPC stream), doğrudan HTTP yanıtına (HTTP stream) aktarılmalıdır. Bu, ses dosyasının tamamının `cdr-service`'in belleğine yüklenmesini engeller ve verimli bir akış sağlar.
+        -   [ ] HTTP yanıtının `Content-Type` başlığı doğru ayarlanmalıdır (örn: `audio/mpeg`).
+    -   [ ] **3. Uçtan Uca Akış:** Kullanıcı "Oynat" butonuna bastığında, frontend bu yeni endpoint'e istek yapmalı ve tarayıcı, gelen ses akışını `<audio>` elementi üzerinden sorunsuzca oynatmalıdır.
+    
+    
 ---
 
 ### **FAZ 1: Temel Kayıt ve Raporlama (Mevcut Durum)**
