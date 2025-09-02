@@ -70,6 +70,14 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
         - [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup hesaplama yapmalı.
         - [ ] Test çağrısı sonunda `cost` alanının doğru bir şekilde doldurulduğu doğrulanmalıdır.
 
+-   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama (YÜKSEK ÖNCELİK)**
+    -   **Durum:** ⬜ **Yapılacak (ACİL)**
+    -   **Bağımlılık:** `media-service`'deki `MEDIA-004`'ün tamamlanmasına bağlı.
+    -   **Açıklama:** `media-service` tarafından yayınlanacak olan `call.recording.available` olayını dinleyerek, ilgili `calls` kaydının `recording_url` alanını S3 URI'si ile güncellemek.
+    -   **Kabul Kriterleri:**
+        -   [ ] `cdr-service`'in `event_handler`'ı, `call.recording.available` olayını işleyecek yeni bir `case` içermelidir.
+        -   [ ] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütununun güncellendiği doğrulanmalıdır.
+        
 ---
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
