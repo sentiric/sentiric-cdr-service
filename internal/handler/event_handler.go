@@ -1,8 +1,9 @@
+// File: internal/handler/event_handler.go (TAM VE NİHAİ SON HALİ)
 package handler
 
 import (
 	"database/sql"
-	"encoding/json" // regexp yerine bu yeterli
+	"encoding/json"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,6 +11,7 @@ import (
 	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
 )
 
+// === DEĞİŞİKLİK: EventPayload'a Timestamp eklendi ===
 type EventPayload struct {
 	EventType  string          `json:"eventType"`
 	TraceID    string          `json:"traceId"`
@@ -20,14 +22,14 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
-// YENİ: agent-service'ten gelecek olay için payload
 type UserIdentifiedPayload struct {
-	EventType string `json:"eventType"`
-	TraceID   string `json:"traceId"`
-	CallID    string `json:"callId"`
-	UserID    string `json:"userId"`
-	ContactID int32  `json:"contactId"`
-	TenantID  string `json:"tenantId"`
+	EventType string    `json:"eventType"`
+	TraceID   string    `json:"traceId"`
+	CallID    string    `json:"callId"`
+	UserID    string    `json:"userId"`
+	ContactID int32     `json:"contactId"`
+	TenantID  string    `json:"tenantId"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type EventHandler struct {
@@ -72,7 +74,6 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallStarted(l, &event)
 	case "call.ended":
 		h.handleCallEnded(l, &event)
-	// === YENİ CASE (CDR-REFACTOR-01) ===
 	case "user.identified.for_call":
 		h.handleUserIdentified(l, body)
 	default:
@@ -81,8 +82,16 @@ func (h *EventHandler) HandleEvent(body []byte) {
 }
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error {
+	// === DEĞİŞİKLİK: Timestamp'in boş olup olmadığını kontrol et ===
+	var eventTimestamp time.Time
+	if event.Timestamp.IsZero() {
+		l.Warn().Msg("Olayda zaman damgası bulunamadı, şimdiki zaman kullanılıyor.")
+		eventTimestamp = time.Now().UTC()
+	} else {
+		eventTimestamp = event.Timestamp
+	}
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	_, err := h.db.Exec(query, event.CallID, event.EventType, event.Timestamp, event.RawPayload)
+	_, err := h.db.Exec(query, event.CallID, event.EventType, eventTimestamp, event.RawPayload)
 	if err != nil {
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
@@ -166,6 +175,3 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı.")
 	}
 }
-
-// Artık bu fonksiyona gerek yok, silebilirsin.
-// func extractAndNormalizePhoneNumber(uri string) string { ... }
