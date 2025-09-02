@@ -3,7 +3,7 @@
 Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanımlar.
 
 
-# Görev Tanımı: Çağrı Kayıtlarını Dinleme Özelliği Entegrasyonu
+# Görev Tanımı: [ TASKLAK ] Çağrı Kayıtlarını Dinleme Özelliği Entegrasyonu
 
 -   **Servis:** `cdr-service` (veya ilgili arayüz servisi)
 -   **Bağımlılık:** `media-service`'teki `MEDIA-FEAT-02` görevinin tamamlanması.
@@ -53,31 +53,6 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 -   [x] **Görev ID: CDR-BUG-01 - Telefon Numarası Normalizasyonu**
     -   **Durum:** ✅ **Tamamlandı** (Ancak `user-service`'e taşındığı için bu servisten kaldırıldı).
 
--   [ ] **Görev ID:** `CDR-BUG-02` / `AGENT-BUG-04`
-    -   **Açıklama:** `cdr-service`'in `call.started` olayında kullanıcı bilgisi aramaktan vazgeçmesini sağla. Bunun yerine, `agent-service`'in, bir misafir kullanıcıyı oluşturduktan veya mevcut bir kullanıcıyı bulduktan sonra, `user_id`, `contact_id` ve `tenant_id` içeren yeni bir `user.identified.for_call` olayı yayınlamasını sağla. `cdr-service` bu yeni olayı dinleyerek mevcut `calls` kaydını güncellemeli.
-    -   **Kabul Kriterleri:**
-        *   [ ] `sentiric-contracts`'e yeni `UserIdentifiedForCallEvent` mesajı eklenmeli.
-        *   [ ] `agent-service`, kullanıcıyı bulduktan/oluşturduktan sonra bu olayı yayınlamalı.
-        *   [ ] `cdr-service`, bu olayı dinleyip ilgili `calls` satırını `UPDATE` etmeli.
-        *   [ ] Test çağrısı sonunda `calls` tablosundaki `user_id`, `contact_id` ve `tenant_id` alanlarının doğru bir şekilde doldurulduğu doğrulanmalıdır.
-
-- [ ] **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
-    - **Durum:** ⬜ Planlandı
-    - **Bağımlılık:** `CDR-BUG-02` ve `SIG-BUG-01`'in çözülmesine bağlı.
-    - **Açıklama:** `calls` tablosuna `cost` (NUMERIC) adında bir sütun ekle. `tenants` tablosuna `cost_per_second` gibi bir alan ekle. `call.ended` olayı işlenirken, çağrının `duration_seconds` ve ilgili `tenant`'ın dakika başına maliyetine göre `cost` alanını hesapla ve kaydet.
-    - **Kabul Kriterleri:**
-        - [ ] Veritabanı şeması güncellenmeli.
-        - [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup hesaplama yapmalı.
-        - [ ] Test çağrısı sonunda `cost` alanının doğru bir şekilde doldurulduğu doğrulanmalıdır.
-
--   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama (YÜKSEK ÖNCELİK)**
-    -   **Durum:** ⬜ **Yapılacak (ACİL)**
-    -   **Bağımlılık:** `media-service`'deki `MEDIA-004`'ün tamamlanmasına bağlı.
-    -   **Açıklama:** `media-service` tarafından yayınlanacak olan `call.recording.available` olayını dinleyerek, ilgili `calls` kaydının `recording_url` alanını S3 URI'si ile güncellemek.
-    -   **Kabul Kriterleri:**
-        -   [ ] `cdr-service`'in `event_handler`'ı, `call.recording.available` olayını işleyecek yeni bir `case` içermelidir.
-        -   [ ] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütununun güncellendiği doğrulanmalıdır.
-        
 ---
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
@@ -99,6 +74,53 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
     -   **Durum:** ✅ **Tamamlandı**
     -   **Not:** Bu değişiklik, `agent-service` ile `cdr-service` arasındaki yarış durumunu (race condition) tamamen ortadan kaldırır.
 
+-   **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
+    -   **Durum:** ⬜ **Yapılacak (Bloklandı)**
+    -   **Öncelik:** YÜKSEK
+    -   **Stratejik Önem:** Kullanıcıların ve yöneticilerin çağrı kayıtlarını dinleyebilmesi için temel bir gerekliliktir. Bu olmadan, kayıtlar S3'te var olsa bile erişilemez durumdadır.
+    -   **Problem Tanımı:** Test çağrısı sonunda `calls` tablosundaki `recording_url` alanı `NULL` kalmıştır.
+    -   **Bağımlılıklar:** `MEDIA-004` (`media-service`'in `call.recording.available` olayını yayınlaması).
+    -   **Kabul Kriterleri:**
+        -   [ ] `event_handler.go` içinde `call.recording.available` olayı için yeni bir `case` bloğu eklenmelidir.
+        -   [ ] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütunu, olaydaki S3 URI'si ile güncellenmelidir.
+    -   **Tahmini Süre:** ~2 Saat
+
+-   **Görev ID: CDR-FEAT-01 - Doğru Süre ve Durum Hesaplama**
+    -   **Durum:** ⬜ **Yapılacak (Bloklandı)**
+    -   **Öncelik:** YÜKSEK
+    -   **Stratejik Önem:** Raporlama, faturalandırma ve analiz için en temel metrik olan "konuşma süresinin" doğru hesaplanmasını sağlar.
+    -   **Problem Tanımı:** `duration_seconds` alanı, sinyalizasyon süresini (10sn) gösteriyor, gerçek konuşma süresini değil. `answer_time` ve `disposition` alanları `NULL` kalıyor.
+    -   **Bağımlılıklar:** `SIG-FEAT-01` (`sip-signaling`'in `call.answered` olayını yayınlaması).
+    -   **Kabul Kriterleri:**
+        -   [ ] `event_handler.go` içine `call.answered` olayı için yeni bir `case` bloğu eklenmelidir.
+        -   [ ] Bu olay işlendiğinde, `calls` tablosundaki `answer_time` alanı ve `disposition` alanı (`ANSWERED` olarak) güncellenmelidir.
+        -   [ ] `handleCallEnded` fonksiyonundaki `duration_seconds` hesaplaması, `end_time - answer_time` olacak şekilde değiştirilmelidir.
+        -   [ ] Test çağrısı sonunda `duration_seconds` alanının, gerçek konuşma süresine yakın bir değer içerdiği doğrulanmalıdır.
+    -   **Tahmini Süre:** ~3-4 Saat
+
+-   **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
+    -   **Durum:** ⬜ **Planlandı**
+    -   **Öncelik:** ORTA
+    -   **Bağımlılıklar:** `CDR-FEAT-01`'in tamamlanması.
+    -   **Tahmini Süre:** ~1 Gün
+
+- [ ] **Görev ID: CDR-006 - Çağrı Maliyetlendirme**
+    - **Durum:** ⬜ Planlandı
+    - **Bağımlılık:** `CDR-BUG-02` ve `SIG-BUG-01`'in çözülmesine bağlı.
+    - **Açıklama:** `calls` tablosuna `cost` (NUMERIC) adında bir sütun ekle. `tenants` tablosuna `cost_per_second` gibi bir alan ekle. `call.ended` olayı işlenirken, çağrının `duration_seconds` ve ilgili `tenant`'ın dakika başına maliyetine göre `cost` alanını hesapla ve kaydet.
+    - **Kabul Kriterleri:**
+        - [ ] Veritabanı şeması güncellenmeli.
+        - [ ] `handleCallEnded` fonksiyonu, `tenant_id` üzerinden maliyet oranını okuyup hesaplama yapmalı.
+        - [ ] Test çağrısı sonunda `cost` alanının doğru bir şekilde doldurulduğu doğrulanmalıdır.
+
+
+-   [ ] **Görev ID:** `CDR-BUG-02` / `AGENT-BUG-04`
+    -   **Açıklama:** `cdr-service`'in `call.started` olayında kullanıcı bilgisi aramaktan vazgeçmesini sağla. Bunun yerine, `agent-service`'in, bir misafir kullanıcıyı oluşturduktan veya mevcut bir kullanıcıyı bulduktan sonra, `user_id`, `contact_id` ve `tenant_id` içeren yeni bir `user.identified.for_call` olayı yayınlamasını sağla. `cdr-service` bu yeni olayı dinleyerek mevcut `calls` kaydını güncellemeli.
+    -   **Kabul Kriterleri:**
+        *   [ ] `sentiric-contracts`'e yeni `UserIdentifiedForCallEvent` mesajı eklenmeli.
+        *   [ ] `agent-service`, kullanıcıyı bulduktan/oluşturduktan sonra bu olayı yayınlamalı.
+        *   [ ] `cdr-service`, bu olayı dinleyip ilgili `calls` satırını `UPDATE` etmeli.
+        *   [ ] Test çağrısı sonunda `calls` tablosundaki `user_id`, `contact_id` ve `tenant_id` alanlarının doğru bir şekilde doldurulduğu doğrulanmalıdır.
 
 -   [ ] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama (YÜKSEK ÖNCELİK)**
     -   **Durum:** ⬜ Planlandı
