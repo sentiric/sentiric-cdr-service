@@ -72,8 +72,8 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallStarted(l, &event)
 	case "call.ended":
 		h.handleCallEnded(l, &event)
-	// YENİ CASE
-	case "user.created.for_call":
+	// === YENİ CASE (CDR-REFACTOR-01) ===
+	case "user.identified.for_call":
 		h.handleUserIdentified(l, body)
 	default:
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
@@ -92,7 +92,7 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// ARTIK SADECE BAŞLANGIÇ KAYDINI ATIYORUZ
+	// ARTIK SADECE BAŞLANGIÇ KAYDINI ATIYORUZ, USER-SERVICE ÇAĞRISI YOK.
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
@@ -137,12 +137,12 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 }
 
-// YENİ FONKSİYON
+// === YENİ FONKSİYON (CDR-REFACTOR-01) ===
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
-	var payload UserIdentifiedPayload
+	var payload UserIdentifiedPayload // Bu struct daha önce tanımlanmıştı
 	if err := json.Unmarshal(body, &payload); err != nil {
-		l.Error().Err(err).Msg("user.created.for_call olayı parse edilemedi.")
-		h.eventsFailed.WithLabelValues("user.created.for_call", "json_unmarshal").Inc()
+		l.Error().Err(err).Msg("user.identified.for_call olayı parse edilemedi.")
+		h.eventsFailed.WithLabelValues("user.identified.for_call", "json_unmarshal").Inc()
 		return
 	}
 
@@ -163,7 +163,7 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	if rows, _ := res.RowsAffected(); rows > 0 {
 		l.Info().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla güncellendi.")
 	} else {
-		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı (muhtemelen çağrı çoktan bitti).")
+		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı.")
 	}
 }
 

@@ -75,16 +75,16 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
 
 -   [ ] **Görev ID: CDR-REFACTOR-01 - Yarış Durumunu Ortadan Kaldırma (KRİTİK)**
-    -   **Durum:** ⬜ Planlandı
-    -   **Bağımlılık:** `AGENT-BUG-04`'ün tamamlanmasına bağlı.
-    -   **Tahmini Süre:** ~1 saat
-    -   **Açıklama:** `call.started` olayında kullanıcı bilgisi arama mantığını tamamen kaldırarak yarış durumu (race condition) sorununu kökünden çözmek. Kullanıcı kimliği bilgisi artık `user.identified.for_call` olayı ile asenkron olarak alınacaktır.
+    -   **Durum:** ⬜ **Bloklandı**
+    -   **Bağımlılık:** `agent-service`'deki `AGENT-BUG-04` görevinin tamamlanmasına bağlı.
+    -   **Bulgular:** `calls` tablosundaki `user_id` gibi alanların `(NULL)` kalması, mevcut `call.started` olayında kullanıcı arama mantığının bir yarış durumu (race condition) yarattığını ve etkisiz olduğunu göstermektedir.
+    -   **Çözüm Stratejisi:** `cdr-service`, kullanıcı kimliğini senkron olarak bulmaya çalışmaktan vazgeçmeli ve bu bilgiyi `agent-service`'ten asenkron bir olayla almalıdır.
     -   **Kabul Kriterleri:**
         -   [ ] `handleCallStarted` fonksiyonu, artık `user-service`'i çağırmamalıdır. Sadece `call_id` ve `start_time` ile temel bir kayıt oluşturmalıdır.
-        -   [ ] `handleUserIdentified` adında yeni bir olay işleyici fonksiyon oluşturulmalıdır.
-        -   [ ] Bu yeni fonksiyon, `user.identified.for_call` olayını dinlemeli, payload'dan `user_id`, `contact_id` ve `tenant_id`'yi almalı ve ilgili `calls` kaydını `UPDATE` etmelidir.
-        -   [ ] Test çağrısı sonunda `calls` tablosundaki ilgili kaydın `user_id` alanının `null` olmadığı doğrulanmalıdır.
-
+        -   [ ] `user.identified.for_call` olayını dinleyecek ve bu olaydaki `user_id`, `contact_id`, `tenant_id` bilgileriyle mevcut `calls` kaydını `UPDATE` edecek yeni bir olay işleyici (`handleUserIdentified`) fonksiyonu oluşturulmalıdır.
+        -   [ ] Test çağrısı sonunda `calls` tablosundaki ilgili kaydın `user_id`, `contact_id` ve `tenant_id` alanlarının `(NULL)` olmadığı doğrulanmalıdır.
+    -   **Tahmini Süre:** ~1 saat (Bağımlılık çözüldükten sonra)
+    
 **Amaç:** Platform yöneticileri ve kullanıcıları için zengin raporlama ve analiz yetenekleri sunmak.
 -   [x] **Görev ID: CDR-004 - Olay Tabanlı CDR Zenginleştirme (KRİTİK DÜZELTME)**
     -   **Açıklama:** `call.started` olayında artık kullanıcı bilgisi aranmıyor. Bunun yerine, `agent-service` tarafından yayınlanan `user.created.for_call` olayı dinlenerek, mevcut `calls` kaydı `user_id` ve `contact_id` ile asenkron olarak güncelleniyor.
