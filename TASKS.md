@@ -82,8 +82,8 @@ Bu belge, `cdr-service`'in geliştirme yol haritasını ve önceliklerini tanım
 
 ### **FAZ 2: Platformun Yönetilebilir Hale Getirilmesi (Sıradaki Öncelik)**
 
--   [ ] **Görev ID: CDR-REFACTOR-01 - Yarış Durumunu Ortadan Kaldırma (KRİTİK)**
-    -   **Durum:** ⬜ **Bloklandı**
+-   [x] **Görev ID: CDR-REFACTOR-01 - Yarış Durumunu Ortadan Kaldırma (KRİTİK)**
+    -   **Durum:** ⬜ **Tammalandı**
     -   **Bağımlılık:** `agent-service`'deki `AGENT-BUG-04` görevinin tamamlanmasına bağlı.
     -   **Bulgular:** `calls` tablosundaki `user_id` gibi alanların `(NULL)` kalması, mevcut `call.started` olayında kullanıcı arama mantığının bir yarış durumu (race condition) yarattığını ve etkisiz olduğunu göstermektedir.
     -   **Çözüm Stratejisi:** `cdr-service`, kullanıcı kimliğini senkron olarak bulmaya çalışmaktan vazgeçmeli ve bu bilgiyi `agent-service`'ten asenkron bir olayla almalıdır.
