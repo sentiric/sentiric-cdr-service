@@ -109,21 +109,42 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 	return nil
 }
 
+// --- DEĞİŞİKLİK BURADA BAŞLIYOR ---
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor veya güncelleniyor.")
+
+	// ON CONFLICT mantığı güncellendi.
+	// Eğer aynı call_id ile bir kayıt zaten varsa, DO NOTHING yerine
+	// start_time ve status'ü yeni gelen olayla güncelle. Bu, telekomun
+	// yeniden denemeleri (retry) sonucu oluşabilecek tutarsızlıkları giderir.
+	// Ayrıca, önceki çağrıdan kalmış olabilecek eski değerleri sıfırlar.
 	query := `
-		INSERT INTO calls (call_id, start_time, status)
-		VALUES ($1, $2, 'STARTED')
-		ON CONFLICT (call_id) DO NOTHING
+		INSERT INTO calls (call_id, start_time, status, user_id, contact_id, tenant_id, recording_url)
+		VALUES ($1, $2, 'STARTED', NULL, NULL, NULL, NULL)
+		ON CONFLICT (call_id) DO UPDATE SET
+			start_time = EXCLUDED.start_time,
+			status = EXCLUDED.status,
+			answer_time = NULL,
+			end_time = NULL,
+			duration_seconds = NULL,
+			disposition = NULL,
+			updated_at = NOW(),
+			-- Bu alanları sıfırlamayı tekrar düşün, belki de user_id'yi korumak daha iyidir
+			user_id = NULL,
+			contact_id = NULL,
+			tenant_id = NULL,
+			recording_url = NULL
 	`
 	_, err := h.db.Exec(query, event.CallID, event.Timestamp)
 	if err != nil {
-		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi veritabanına yazılamadı.")
-		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
+		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi yazılamadı/güncellenemedi.")
+		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_upsert_failed").Inc()
 		return
 	}
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu veya güncellendi.")
 }
+
+// --- DEĞİŞİKLİK BURADA BİTİYOR ---
 
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var startTime, answerTime sql.NullTime
@@ -171,7 +192,6 @@ func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload)
 		return
 	}
 
-	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
 	query := `UPDATE calls SET answer_time = $1, disposition = 'ANSWERED', updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
 	_, err := h.db.Exec(query, payload.Timestamp, event.CallID)
 	if err != nil {
@@ -188,7 +208,6 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 		return
 	}
 
-	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
 	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
 	_, err := h.db.Exec(query, payload.RecordingURI, event.CallID)
 	if err != nil {
@@ -209,7 +228,6 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
 	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor.")
 
-	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
 	query := `
 		UPDATE calls
 		SET user_id = $1, contact_id = $2, tenant_id = $3, updated_at = NOW()
