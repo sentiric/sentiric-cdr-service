@@ -19,6 +19,13 @@ import (
 	"github.com/sentiric/sentiric-cdr-service/internal/queue"
 )
 
+// YENİ: ldflags ile doldurulacak değişkenler
+var (
+	ServiceVersion string
+	GitCommit      string
+	BuildDate      string
+)
+
 const serviceName = "cdr-service"
 
 func main() {
@@ -28,7 +35,14 @@ func main() {
 	}
 
 	appLog := logger.New(serviceName, cfg.Env)
-	appLog.Info().Msg("Konfigürasyon başarıyla yüklendi.")
+
+	// YENİ: Başlangıçta versiyon bilgisini logla
+	appLog.Info().
+		Str("version", ServiceVersion).
+		Str("commit", GitCommit).
+		Str("build_date", BuildDate).
+		Str("profile", cfg.Env).
+		Msg("🚀 cdr-service başlatılıyor...")
 
 	go metrics.StartServer(cfg.MetricsPort, appLog)
 
@@ -53,7 +67,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
-	// DÜZELTME: Artık kullanılmayan cfg.QueueName'i kaldırıyoruz.
 	go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &wg)
 
 	quit := make(chan os.Signal, 1)
