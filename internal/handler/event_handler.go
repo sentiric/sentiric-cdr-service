@@ -11,7 +11,6 @@ import (
 	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
 )
 
-// === DEĞİŞİKLİK: EventPayload'a Timestamp eklendi ===
 type EventPayload struct {
 	EventType  string          `json:"eventType"`
 	TraceID    string          `json:"traceId"`
@@ -32,15 +31,12 @@ type UserIdentifiedPayload struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// --- YENİ: Yeni olaylar için struct'lar ---
 type CallAnsweredPayload struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 type CallRecordingAvailablePayload struct {
 	RecordingURI string `json:"recordingUri"`
 }
-
-// --- YENİ SONU ---
 
 type EventHandler struct {
 	db              *sql.DB
@@ -86,19 +82,16 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallEnded(l, &event)
 	case "user.identified.for_call":
 		h.handleUserIdentified(l, body)
-	// --- YENİ CASE BLOKLARI ---
 	case "call.answered":
 		h.handleCallAnswered(l, &event)
 	case "call.recording.available":
 		h.handleRecordingAvailable(l, &event)
-	// --- YENİ SONU ---
 	default:
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
 }
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error {
-	// === DEĞİŞİKLİK: Timestamp'in boş olup olmadığını kontrol et ===
 	var eventTimestamp time.Time
 	if event.Timestamp.IsZero() {
 		l.Warn().Msg("Olayda zaman damgası bulunamadı, şimdiki zaman kullanılıyor.")
@@ -117,7 +110,6 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// ARTIK SADECE BAŞLANGIÇ KAYDINI ATIYORUZ, USER-SERVICE ÇAĞRISI YOK.
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
@@ -133,7 +125,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
 }
 
-// --- DEĞİŞİKLİK: handleCallEnded güncellendi ---
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var startTime, answerTime sql.NullTime
 	err := h.db.QueryRow("SELECT start_time, answer_time FROM calls WHERE call_id = $1", event.CallID).Scan(&startTime, &answerTime)
@@ -152,7 +143,6 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		duration = 0
 	}
 
-	// Disposition'ı belirle
 	disposition := "NO_ANSWER"
 	if answerTime.Valid {
 		disposition = "ANSWERED"
@@ -174,9 +164,6 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 }
 
-// --- DEĞİŞİKLİK SONU ---
-
-// --- YENİ FONKSİYONLAR ---
 func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload) {
 	var payload CallAnsweredPayload
 	if err := json.Unmarshal(event.RawPayload, &payload); err != nil {
@@ -184,7 +171,8 @@ func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload)
 		return
 	}
 
-	query := `UPDATE calls SET answer_time = $1, disposition = 'ANSWERED', updated_at = NOW() WHERE call_id = $2`
+	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
+	query := `UPDATE calls SET answer_time = $1, disposition = 'ANSWERED', updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
 	_, err := h.db.Exec(query, payload.Timestamp, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("CDR 'answer_time' ile güncellenemedi.")
@@ -200,7 +188,8 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 		return
 	}
 
-	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2`
+	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
+	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
 	_, err := h.db.Exec(query, payload.RecordingURI, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("CDR 'recording_url' ile güncellenemedi.")
@@ -209,10 +198,8 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 	l.Info().Msg("CDR 'recording_url' ile başarıyla güncellendi.")
 }
 
-// --- YENİ FONKSİYONLAR SONU ---
-
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
-	var payload UserIdentifiedPayload // Bu struct daha önce tanımlanmıştı
+	var payload UserIdentifiedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		l.Error().Err(err).Msg("user.identified.for_call olayı parse edilemedi.")
 		h.eventsFailed.WithLabelValues("user.identified.for_call", "json_unmarshal").Inc()
@@ -222,10 +209,11 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
 	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor.")
 
+	// DÜZELTME: Sadece tamamlanmamış çağrıları güncelle
 	query := `
 		UPDATE calls
 		SET user_id = $1, contact_id = $2, tenant_id = $3, updated_at = NOW()
-		WHERE call_id = $4
+		WHERE call_id = $4 AND status != 'COMPLETED'
 	`
 	res, err := h.db.Exec(query, payload.UserID, payload.ContactID, payload.TenantID, payload.CallID)
 	if err != nil {
@@ -236,6 +224,6 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	if rows, _ := res.RowsAffected(); rows > 0 {
 		l.Info().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla güncellendi.")
 	} else {
-		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı.")
+		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı (muhtemelen çağrı zaten tamamlanmış).")
 	}
 }

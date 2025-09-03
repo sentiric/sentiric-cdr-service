@@ -1,4 +1,4 @@
-# 📊 Sentiric CDR Service - Görev Listesi (v1.4 - Veri Bütünlüğü)
+# 📊 Sentiric CDR Service - Görev Listesi (v1.5 - Veri Bütünlüğü)
 
 Bu belge, `cdr-service`'in platformdaki tüm çağrı verilerini eksiksiz ve doğru bir şekilde kaydetmesini sağlamak için gereken görevleri tanımlar.
 
@@ -10,9 +10,9 @@ Bu belge, `cdr-service`'in platformdaki tüm çağrı verilerini eksiksiz ve do�
 
 ---
 
-### **FAZ 2: Eksik Verileri Tamamlama (Mevcut Odak)**
+### **FAZ 2: Eksik Verileri Tamamlama ve Bütünlüğü Sağlama (Mevcut Odak)**
 
--   **Görev ID: CDR-FEAT-01 - Doğru Süre ve Durum Hesaplama**
+-   [x] **Görev ID: CDR-FEAT-01 - Doğru Süre ve Durum Hesaplama**
     -   **Durum:** ✅ **Tamamlandı**
     -   **Öncelik:** YÜKSEK
     -   **Stratejik Önem:** Raporlama, faturalandırma ve analiz için en temel metrik olan "konuşma süresinin" doğru hesaplanmasını sağlar.
@@ -25,7 +25,7 @@ Bu belge, `cdr-service`'in platformdaki tüm çağrı verilerini eksiksiz ve do�
         -   [x] Test çağrısı sonunda `duration_seconds` alanının, gerçek konuşma süresine yakın bir değer içerdiği doğrulanmalıdır.
     -   **Tahmini Süre:** ~3-4 Saat
 
--   **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
+-   [x] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
     -   **Durum:** ✅ **Tamamlandı**
     -   **Öncelik:** YÜKSEK
     -   **Stratejik Önem:** Kullanıcıların ve yöneticilerin çağrı kayıtlarını dinleyebilmesi için temel bir gerekliliktir. Bu olmadan, kayıtlar S3'te var olsa bile erişilemez durumdadır.
@@ -34,6 +34,12 @@ Bu belge, `cdr-service`'in platformdaki tüm çağrı verilerini eksiksiz ve do�
         -   [x] `event_handler.go` içinde `call.recording.available` olayı için yeni bir `case` bloğu eklenmelidir.
         -   [x] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütunu, olaydaki S3 URI'si ile güncellenmelidir.
     -   **Tahmini Süre:** ~2 Saat
+
+-   [x] **Görev ID: CDR-BUG-01 (YENİ) - Sonlanmış CDR'ların Üzerine Yazılmasını Engelle**
+    -   **Durum:** ✅ **Tamamlandı**
+    -   **Öncelik:** YÜKSEK
+    -   **Problem Tanımı:** Yinelenen olaylar nedeniyle, durumu 'COMPLETED' olarak işaretlenmiş bir çağrı kaydı daha sonra gelen `call.answered` gibi olaylarla güncellenebiliyor, bu da `answer_time`'ın `end_time`'dan sonra olması gibi veri tutarsızlıklarına yol açıyordu.
+    -   **Çözüm Stratejisi:** Tüm `UPDATE` sorgularına `WHERE status != 'COMPLETED'` koşulu eklendi.
 
 ---
 
