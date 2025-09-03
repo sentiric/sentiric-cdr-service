@@ -39,6 +39,7 @@ type CallAnsweredPayload struct {
 type CallRecordingAvailablePayload struct {
 	RecordingURI string `json:"recordingUri"`
 }
+
 // --- YENİ SONU ---
 
 type EventHandler struct {
@@ -77,7 +78,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.eventsFailed.WithLabelValues(event.EventType, "db_raw_insert_failed").Inc()
 		return
 	}
-	
+
 	switch event.EventType {
 	case "call.started":
 		h.handleCallStarted(l, &event)
@@ -132,9 +133,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
 }
 
-
-
-
 // --- DEĞİŞİKLİK: handleCallEnded güncellendi ---
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var startTime, answerTime sql.NullTime
@@ -150,7 +148,9 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	} else {
 		duration = int(event.Timestamp.Sub(startTime.Time).Seconds())
 	}
-	if duration < 0 { duration = 0 }
+	if duration < 0 {
+		duration = 0
+	}
 
 	// Disposition'ı belirle
 	disposition := "NO_ANSWER"
@@ -173,8 +173,8 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		l.Info().Int("duration", duration).Str("disposition", disposition).Msg("Özet çağrı kaydı (CDR) başarıyla sonlandırıldı ve güncellendi.")
 	}
 }
-// --- DEĞİŞİKLİK SONU ---
 
+// --- DEĞİŞİKLİK SONU ---
 
 // --- YENİ FONKSİYONLAR ---
 func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload) {
@@ -208,6 +208,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 	}
 	l.Info().Msg("CDR 'recording_url' ile başarıyla güncellendi.")
 }
+
 // --- YENİ FONKSİYONLAR SONU ---
 
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
