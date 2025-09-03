@@ -26,13 +26,13 @@ Bu belge, `cdr-service`'in platformdaki tüm çağrı verilerini eksiksiz ve do�
     -   **Tahmini Süre:** ~3-4 Saat
 
 -   [x] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
-    -   **Durum:** ✅ **Tamamlandı**
+    -   **Durum:** ✅ **Doğrulanmadan Kısmen Tamamlandı**
     -   **Öncelik:** YÜKSEK
     -   **Stratejik Önem:** Kullanıcıların ve yöneticilerin çağrı kayıtlarını dinleyebilmesi için temel bir gerekliliktir. Bu olmadan, kayıtlar S3'te var olsa bile erişilemez durumdadır.
     -   **Bağımlılıklar:** `MEDIA-004` (`media-service`'in `call.recording.available` olayını yayınlaması).
     -   **Kabul Kriterleri:**
         -   [x] `event_handler.go` içinde `call.recording.available` olayı için yeni bir `case` bloğu eklenmelidir.
-        -   [x] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütunu, olaydaki S3 URI'si ile güncellenmelidir.
+        -   [ ] Bu olay işlendiğinde, PostgreSQL'deki `calls` tablosunda ilgili `call_id`'ye sahip satırın `recording_url` sütunu, olaydaki S3 URI'si ile güncellenmelidir.
     -   **Tahmini Süre:** ~2 Saat
 
 -   [x] **Görev ID: CDR-BUG-01 (YENİ) - Sonlanmış CDR'ların Üzerine Yazılmasını Engelle**
