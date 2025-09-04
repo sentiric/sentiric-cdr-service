@@ -1,4 +1,4 @@
-// internal/handler/event_handler.go dosyasının TAM ve GÜNCELLENMİŞ HALİ
+// File: sentiric-cdr-service/internal/handler/event_handler.go (TAM VE DOĞRU HALİ)
 package handler
 
 import (
@@ -21,7 +21,6 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
-// UserIdentifiedPayload struct tanımını da dosyaya eklemeyi unutmayın.
 type UserIdentifiedPayload struct {
 	EventType string    `json:"eventType"`
 	TraceID   string    `json:"traceId"`
@@ -81,10 +80,8 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallStarted(l, &event)
 	case "call.ended":
 		h.handleCallEnded(l, &event)
-	// --- YENİ CASE ---
 	case "user.identified.for_call":
 		h.handleUserIdentified(l, body)
-	// --- GÜNCELLEME SONU ---
 	case "call.answered":
 		h.handleCallAnswered(l, &event)
 	case "call.recording.available":
@@ -115,8 +112,7 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
 
-	// DEĞİŞİKLİK: ON CONFLICT DO NOTHING kullanarak, mevcut bir kaydın üzerine yazılmasını engelliyoruz.
-	// İlk gelen `call.started` her zaman doğrudur. Sonrakiler, telekomun yeniden denemeleridir.
+	// DÜZELTME: ON CONFLICT DO NOTHING kullanarak, mevcut bir kaydın üzerine yazılmasını engelliyoruz.
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
 		VALUES ($1, $2, 'STARTED')
@@ -134,12 +130,7 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	} else {
 		l.Warn().Msg("Bu çağrı için zaten bir başlangıç kaydı mevcut. Yinelenen 'call.started' olayı görmezden gelindi.")
 	}
-
-	// user.identified.for_call henüz gelmediği için bu alanları daha sonra güncelleyeceğiz.
-	// Bu nedenle, ilk ekleme sırasında bu alanları NULL olarak bırakmak doğrudur.
 }
-
-// --- DEĞİŞİKLİK BURADA BİTİYOR ---
 
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var startTime, answerTime sql.NullTime
@@ -150,17 +141,15 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 
 	var duration int
-	// Eğer cevaplanma zamanı varsa, süreyi ona göre hesapla
 	if answerTime.Valid {
 		duration = int(event.Timestamp.Sub(answerTime.Time).Seconds())
-	} else { // Cevaplanmadıysa başlangıç zamanına göre hesapla
+	} else {
 		duration = int(event.Timestamp.Sub(startTime.Time).Seconds())
 	}
 	if duration < 0 {
 		duration = 0
 	}
 
-	// YENİ: Çağrı durumunu belirle
 	disposition := "NO_ANSWER"
 	if answerTime.Valid {
 		disposition = "ANSWERED"
@@ -205,7 +194,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 		return
 	}
 
-	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
+	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2`
 	_, err := h.db.Exec(query, payload.RecordingURI, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("CDR 'recording_url' ile güncellenemedi.")
@@ -214,7 +203,6 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 	l.Info().Msg("CDR 'recording_url' ile başarıyla güncellendi.")
 }
 
-// user.identified.for_call olayını işleyen yeni bir fonksiyon ekliyoruz.
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	var payload UserIdentifiedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
