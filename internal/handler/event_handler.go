@@ -151,15 +151,17 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	}
 
 	var duration int
+	// Eğer cevaplanma zamanı varsa, süreyi ona göre hesapla
 	if answerTime.Valid {
 		duration = int(event.Timestamp.Sub(answerTime.Time).Seconds())
-	} else {
+	} else { // Cevaplanmadıysa başlangıç zamanına göre hesapla
 		duration = int(event.Timestamp.Sub(startTime.Time).Seconds())
 	}
 	if duration < 0 {
 		duration = 0
 	}
 
+	// YENİ: Çağrı durumunu belirle
 	disposition := "NO_ANSWER"
 	if answerTime.Valid {
 		disposition = "ANSWERED"
