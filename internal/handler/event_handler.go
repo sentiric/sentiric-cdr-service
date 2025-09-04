@@ -21,6 +21,7 @@ type EventPayload struct {
 	RawPayload json.RawMessage `json:"-"`
 }
 
+// UserIdentifiedPayload struct tanımını da dosyaya eklemeyi unutmayın.
 type UserIdentifiedPayload struct {
 	EventType string    `json:"eventType"`
 	TraceID   string    `json:"traceId"`
@@ -80,8 +81,10 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		h.handleCallStarted(l, &event)
 	case "call.ended":
 		h.handleCallEnded(l, &event)
+	// --- YENİ CASE ---
 	case "user.identified.for_call":
 		h.handleUserIdentified(l, body)
+	// --- GÜNCELLEME SONU ---
 	case "call.answered":
 		h.handleCallAnswered(l, &event)
 	case "call.recording.available":
@@ -110,34 +113,30 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor veya güncelleniyor.")
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
 
-	// ON CONFLICT, aynı call_id ile bir kayıt zaten varsa, DO NOTHING yerine
-	// başlangıç zamanını ve durumu günceller. Bu, telekomun yeniden denemeleri sonucu
-	// oluşabilecek tutarsızlıkları giderir ve eski kayıtları sıfırlar.
+	// DEĞİŞİKLİK: ON CONFLICT DO NOTHING kullanarak, mevcut bir kaydın üzerine yazılmasını engelliyoruz.
+	// İlk gelen `call.started` her zaman doğrudur. Sonrakiler, telekomun yeniden denemeleridir.
 	query := `
-		INSERT INTO calls (call_id, start_time, status, user_id, contact_id, tenant_id, recording_url)
-		VALUES ($1, $2, 'STARTED', NULL, NULL, NULL, NULL)
-		ON CONFLICT (call_id) DO UPDATE SET
-			start_time = EXCLUDED.start_time,
-			status = EXCLUDED.status,
-			answer_time = NULL,
-			end_time = NULL,
-			duration_seconds = NULL,
-			disposition = NULL,
-			updated_at = NOW(),
-			user_id = NULL,
-			contact_id = NULL,
-			tenant_id = NULL,
-			recording_url = NULL
+		INSERT INTO calls (call_id, start_time, status)
+		VALUES ($1, $2, 'STARTED')
+		ON CONFLICT (call_id) DO NOTHING
 	`
-	_, err := h.db.Exec(query, event.CallID, event.Timestamp)
+	res, err := h.db.Exec(query, event.CallID, event.Timestamp)
 	if err != nil {
-		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi yazılamadı/güncellenemedi.")
-		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_upsert_failed").Inc()
+		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi yazılamadı.")
+		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
 		return
 	}
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu veya güncellendi.")
+
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
+	} else {
+		l.Warn().Msg("Bu çağrı için zaten bir başlangıç kaydı mevcut. Yinelenen 'call.started' olayı görmezden gelindi.")
+	}
+
+	// user.identified.for_call henüz gelmediği için bu alanları daha sonra güncelleyeceğiz.
+	// Bu nedenle, ilk ekleme sırasında bu alanları NULL olarak bırakmak doğrudur.
 }
 
 // --- DEĞİŞİKLİK BURADA BİTİYOR ---
@@ -215,6 +214,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 	l.Info().Msg("CDR 'recording_url' ile başarıyla güncellendi.")
 }
 
+// user.identified.for_call olayını işleyen yeni bir fonksiyon ekliyoruz.
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	var payload UserIdentifiedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
