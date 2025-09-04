@@ -109,15 +109,12 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 	return nil
 }
 
-// --- DEĞİŞİKLİK BURADA BAŞLIYOR ---
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor veya güncelleniyor.")
 
-	// ON CONFLICT mantığı güncellendi.
-	// Eğer aynı call_id ile bir kayıt zaten varsa, DO NOTHING yerine
-	// start_time ve status'ü yeni gelen olayla güncelle. Bu, telekomun
-	// yeniden denemeleri (retry) sonucu oluşabilecek tutarsızlıkları giderir.
-	// Ayrıca, önceki çağrıdan kalmış olabilecek eski değerleri sıfırlar.
+	// ON CONFLICT, aynı call_id ile bir kayıt zaten varsa, DO NOTHING yerine
+	// başlangıç zamanını ve durumu günceller. Bu, telekomun yeniden denemeleri sonucu
+	// oluşabilecek tutarsızlıkları giderir ve eski kayıtları sıfırlar.
 	query := `
 		INSERT INTO calls (call_id, start_time, status, user_id, contact_id, tenant_id, recording_url)
 		VALUES ($1, $2, 'STARTED', NULL, NULL, NULL, NULL)
@@ -129,7 +126,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 			duration_seconds = NULL,
 			disposition = NULL,
 			updated_at = NOW(),
-			-- Bu alanları sıfırlamayı tekrar düşün, belki de user_id'yi korumak daha iyidir
 			user_id = NULL,
 			contact_id = NULL,
 			tenant_id = NULL,
