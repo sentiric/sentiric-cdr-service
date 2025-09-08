@@ -1,31 +1,51 @@
-# 📊 Sentiric CDR Service - Görev Listesi (v1.7 - Veri Bütünlüğü)
+# 📊 Sentiric CDR Service - Görev Listesi (v2.0 - Dayanıklılık ve Bütünlük)
 
 Bu belge, cdr-service'in geliştirme yol haritasını, tamamlanan görevleri ve mevcut öncelikleri tanımlar.
 
 ---
 
-### **FAZ 1: Temel Olay Kaydı (Mevcut Durum)**
+### **FAZ 1: Temel Olay Kaydı (Tamamlandı)**
 
-**Amaç:** RabbitMQ üzerinden gelen tüm çağrı yaşam döngüsü olaylarını dinleyerek ham veriyi (`call_events`) ve temel çağrı özetini (`calls`) oluşturmak.
-
--   [x] **Görev ID: CDR-CORE-01 - Olay Tüketimi:** RabbitMQ'daki `sentiric_events` exchange'ini dinler ve tüm olayları alır.
--   [x] **Görev ID: CDR-CORE-02 - Ham Olay Kaydı:** Gelen her olayın ham JSON verisini, denetim için `call_events` tablosuna kaydeder.
--   [x] **Görev ID: CDR-CORE-03 - Temel CDR Oluşturma:** `call.started` ve `call.ended` olaylarını işleyerek `calls` tablosunda bir çağrının başlangıç ve bitiş zamanlarını kaydeder.
--   [x] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama:** `call.recording.available` olayını işleyerek ilgili çağrı kaydının `recording_url` alanını günceller.
+-   [x] **Görev ID: CDR-CORE-01 - Olay Tüketimi**
+-   [x] **Görev ID: CDR-CORE-02 - Ham Olay Kaydı**
+-   [x] **Görev ID: CDR-CORE-03 - Temel CDR Oluşturma**
+-   [x] **Görev ID: CDR-005 - Çağrı Kaydı URL'ini Saklama**
 
 ---
 
-### **FAZ 2: Veri Bütünlüğü ve Zenginleştirme (Mevcut Odak)**
+### **FAZ 2: Dayanıklılık ve Veri Bütünlüğü (Mevcut Odak)**
 
-**Amaç:** `calls` tablosundaki özet kayıtların, çağrıyla ilgili tüm kritik bilgilerle (kullanıcı, tenant vb.) zenginleştirilmesini ve veri bütünlüğünün sağlanmasını garanti altına almak.
+**Amaç:** Servisin başlatılmasını daha dayanıklı hale getirmek, olay sırasından kaynaklanabilecek veri kaybını önlemek ve kod tabanını standartlara uygun, temiz bir hale getirmek.
 
--   **Görev ID: CDR-BUG-01 - Eksik Kullanıcı/Tenant Verisi Sorununu Giderme (YÜKSEK ÖNCELİK)**
-    -   **Durum:** 🟧 **Bloklandı (AGENT-BUG-04 bekleniyor)**
-    -   **Problem Tanımı:** Canlı testlerde, `calls` tablosundaki kayıtların `user_id`, `tenant_id` ve `contact_id` alanlarının `NULL` olarak kaldığı tespit edilmiştir. Bu, raporlama için kritik bir veri kaybıdır.
-    -   **Kök Neden Analizi:** Sorunun kök nedeni, `agent-service`'in kullanıcıyı tanımladıktan sonra `user.identified.for_call` olayını yayınlamamasıdır. `cdr-service`, bu olayı işleyecek `handleUserIdentified` fonksiyonuna sahiptir, ancak olay hiç gelmediği için tetiklenememektedir.
-    -   **Çözüm Stratejisi ve Doğrulama:**
-        -   Bu görev için `cdr-service`'te bir kod değişikliği beklenmemektedir.
-        -   `AGENT-BUG-04` görevi tamamlandıktan sonra, yapılacak bir test aramasında bu servisin `user.identified.for_call` olayını alıp `calls` tablosunu doğru bir şekilde güncellediği **doğrulanmalıdır.**
+-   **Görev ID: CDR-BUG-02 - Olay Sırası Yarış Durumunu (Race Condition) Çözme (KRİTİK)**
+    -   **Durum:** ⬜ **Yapılacak (Öncelik 1)**
+    -   **Problem Tanımı:** Mevcut mantık, `call.started` olayının her zaman `user.identified.for_call`'dan önce geleceğini varsaymaktadır. Olayların ters sırada gelmesi durumunda kullanıcı/tenant bilgisi kalıcı olarak kaybolmaktadır.
+    -   **Çözüm Stratejisi:** Veritabanı yazma işlemleri "UPSERT" (INSERT ... ON CONFLICT DO UPDATE) mantığına geçirilecektir. `handleCallStarted` ve `handleUserIdentified` fonksiyonları, `calls` tablosuna kayıt eklerken veya güncellerken, kaydın önceden var olup olmamasından etkilenmeyecek şekilde yeniden yazılacaktır. Bu, olay sırasından bağımsız olarak veri bütünlüğünü garanti altına alacaktır.
+
+-   **Görev ID: CDR-REFACTOR-01 - Dayanıklı Başlatma ve Graceful Shutdown**
+    -   **Durum:** ⬜ **Yapılacak (Öncelik 2)**
+    -   **Problem Tanımı:** Servis, başlangıçta bağımlılıkları (Postgres, RabbitMQ) hazır değilse `log.Fatal` ile çökmektedir. Bu, dağıtık ortamlarda kırılgan bir davranıştır.
+    -   **Çözüm Stratejisi:** `agent-service`'te uygulanan dayanıklı başlatma mimarisi buraya da uygulanacaktır. `main.go` ve bağlantı fonksiyonları, servisin hemen başlayıp arka planda periyodik olarak bağlantı denemeleri yapacağı ve `CTRL+C` ile her an kontrollü bir şekilde kapatılabileceği şekilde yeniden yapılandırılacaktır.
+
+-   **Görev ID: CDR-IMPRV-01 - Dockerfile Güvenlik ve Standardizasyonu**
+    -   **Durum:** ⬜ **Yapılacak**
+    -   **Açıklama:** `Dockerfile`, root kullanıcısıyla çalışmakta ve platformdaki diğer Go servislerinden farklı olarak `alpine` tabanını kullanmaktadır.
     -   **Kabul Kriterleri:**
-        -   [ ] `AGENT-BUG-04` tamamlandıktan sonraki ilk testte, `cdr-service` loglarında "Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor." mesajı görülmelidir.
-        -   [ ] Veritabanındaki `calls` tablosunda ilgili `call_id` için `user_id`, `contact_id` ve `tenant_id` sütunlarının doğru verilerle doldurulduğu doğrulanmalıdır.
+        -   [ ] `Dockerfile` tabanı, tutarlılık için `debian:bookworm-slim` olarak güncellenmelidir.
+        -   [ ] Güvenlik en iyi uygulamalarına uymak için, imaj içinde root olmayan bir `appuser` oluşturulmalı ve uygulama bu kullanıcı ile çalıştırılmalıdır.
+
+-   **Görev ID: CDR-CLEANUP-01 - Gereksiz Kodların Temizlenmesi**
+    -   **Durum:** ⬜ **Yapılacak**
+    -   **Açıklama:** `internal/database/postgres.go` dosyasında `cdr-service`'in sorumluluk alanına girmeyen `GetAnnouncementPathFromDB` ve `GetTemplateFromDB` fonksiyonları bulunmaktadır.
+    -   **Kabul Kriterleri:**
+        -   [ ] Bu iki fonksiyon ve bunlarla ilgili olası testler kod tabanından tamamen kaldırılmalıdır.
+
+-   **Görev ID: CDR-IMPRV-03 - Log Zaman Damgasını Standardize Etme**
+    -   **Durum:** ⬜ **Yapılacak**
+    -   **Açıklama:** Loglardaki zaman damgaları, platform standardı olan UTC ve RFC3339 formatında değildir.
+    -   **Kabul Kriterleri:**
+        -   [ ] `internal/logger/logger.go` dosyası, `agent-service`'teki standartlaştırılmış versiyon ile güncellenmelidir.
+
+-   **Görev ID: CDR-BUG-01 - Eksik Kullanıcı/Tenant Verisi Sorunu (Güncellendi)**
+    -   **Durum:** 🟧 **Bloklandı (AGENT-BUG-04 bekleniyor, CDR-BUG-02 ile çözülecek)**
+    -   **Açıklama:** Bu görevin asıl nedeni `agent-service`'in olay yayınlamamasıdır. Ancak, `CDR-BUG-02` görevi tamamlandığında, `cdr-service` olayların sırasından etkilenmeyeceği için bu sorun da temelden çözülmüş olacaktır. Bu görev, `CDR-BUG-02`'nin doğrulaması olarak takip edilecektir.
