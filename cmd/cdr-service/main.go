@@ -1,15 +1,16 @@
-// ========== FILE: sentiric-cdr-service/cmd/cdr-service/main.go ==========
 package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
+	"github.com/rabbitmq/amqp091-go"
+	"github.com/rs/zerolog"
 	"github.com/sentiric/sentiric-cdr-service/internal/client"
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
@@ -19,7 +20,6 @@ import (
 	"github.com/sentiric/sentiric-cdr-service/internal/queue"
 )
 
-// YENİ: ldflags ile doldurulacak değişkenler
 var (
 	ServiceVersion string
 	GitCommit      string
@@ -35,8 +35,6 @@ func main() {
 	}
 
 	appLog := logger.New(serviceName, cfg.Env)
-
-	// YENİ: Başlangıçta versiyon bilgisini logla
 	appLog.Info().
 		Str("version", ServiceVersion).
 		Str("commit", GitCommit).
@@ -46,54 +44,90 @@ func main() {
 
 	go metrics.StartServer(cfg.MetricsPort, appLog)
 
-	db, err := database.Connect(cfg.PostgresURL, appLog)
-	if err != nil {
-		appLog.Fatal().Err(err).Msg("Veritabanı bağlantısı kurulamadı")
-	}
-	defer db.Close()
-
-	userClient, err := client.NewUserServiceClient(cfg)
-	if err != nil {
-		appLog.Fatal().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı")
-	}
-
-	eventHandler := handler.NewEventHandler(db, userClient, appLog, metrics.EventsProcessed, metrics.EventsFailed)
-
-	rabbitCh, closeChan := queue.Connect(cfg.RabbitMQURL, appLog)
-	if rabbitCh != nil {
-		defer rabbitCh.Close()
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
-	go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &wg)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// Arka planda dayanıklı bir şekilde bağlantıları kur.
+		db, rabbitCh, rabbitCloseChan := setupInfrastructure(ctx, cfg, appLog)
+		if ctx.Err() != nil {
+			return // Kurulum iptal edildi.
+		}
+		defer db.Close()
+		defer rabbitCh.Close()
+
+		userClient, err := client.NewUserServiceClient(cfg)
+		if err != nil {
+			appLog.Error().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı, servis sonlandırılıyor.")
+			cancel() // Hata kritik, tüm uygulamayı durdur.
+			return
+		}
+
+		eventHandler := handler.NewEventHandler(db, userClient, appLog, metrics.EventsProcessed, metrics.EventsFailed)
+
+		var consumerWg sync.WaitGroup
+		go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &consumerWg)
+
+		// Context iptal edilene veya RabbitMQ bağlantısı kopana kadar bekle.
+		select {
+		case <-ctx.Done():
+		case err := <-rabbitCloseChan:
+			if err != nil {
+				appLog.Error().Err(err).Msg("RabbitMQ bağlantısı koptu, servis durduruluyor.")
+			}
+			cancel() // Diğer her şeyi durdurmak için context'i iptal et.
+		}
+
+		appLog.Info().Msg("RabbitMQ tüketicisinin bitmesi bekleniyor...")
+		consumerWg.Wait()
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
 
-	select {
-	case sig := <-quit:
-		appLog.Info().Str("signal", sig.String()).Msg("Kapatma sinyali alındı, servis durduruluyor...")
-	case err := <-closeChan:
-		if err != nil {
-			appLog.Error().Err(err).Msg("RabbitMQ bağlantısı koptu.")
-		}
-	}
-
+	appLog.Info().Msg("Kapatma sinyali alındı, servis durduruluyor...")
 	cancel()
 
-	appLog.Info().Msg("Mevcut işlemlerin bitmesi bekleniyor...")
-	waitChan := make(chan struct{})
+	wg.Wait()
+	appLog.Info().Msg("Tüm servisler başarıyla durduruldu. Çıkış yapılıyor.")
+}
+
+// setupInfrastructure, altyapı bağlantılarını kurar.
+func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog.Logger) (
+	db *sql.DB,
+	rabbitCh *amqp091.Channel,
+	closeChan <-chan *amqp091.Error,
+) {
+	var infraWg sync.WaitGroup
+	infraWg.Add(2) // Postgres ve RabbitMQ için
+
 	go func() {
-		wg.Wait()
-		close(waitChan)
+		defer infraWg.Done()
+		var err error
+		db, err = database.Connect(ctx, cfg.PostgresURL, appLog)
+		if err != nil && ctx.Err() == nil {
+			appLog.Error().Err(err).Msg("Veritabanı bağlantı denemeleri başarısız oldu, servis sonlandırılıyor.")
+		}
 	}()
 
-	select {
-	case <-waitChan:
-		appLog.Info().Msg("Tüm işlemler başarıyla tamamlandı. Çıkış yapılıyor.")
-	case <-time.After(10 * time.Second):
-		appLog.Warn().Msg("Graceful shutdown zaman aşımına uğradı. Çıkış yapılıyor.")
+	go func() {
+		defer infraWg.Done()
+		var err error
+		rabbitCh, closeChan, err = queue.Connect(ctx, cfg.RabbitMQURL, appLog)
+		if err != nil && ctx.Err() == nil {
+			appLog.Error().Err(err).Msg("RabbitMQ bağlantı denemeleri başarısız oldu, servis sonlandırılıyor.")
+		}
+	}()
+
+	infraWg.Wait()
+	if ctx.Err() != nil {
+		appLog.Info().Msg("Altyapı kurulumu, servis kapatıldığı için iptal edildi.")
+		return
 	}
+	appLog.Info().Msg("Tüm altyapı bağlantıları başarıyla kuruldu.")
+	return
 }

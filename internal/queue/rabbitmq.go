@@ -1,9 +1,8 @@
-// File: sentiric-cdr-service/internal/queue/rabbitmq.go
-
 package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -16,33 +15,45 @@ const (
 	cdrQueueName = "sentiric.cdr_service.events"
 )
 
-func Connect(url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.Error) {
-
+// DEĞİŞİKLİK: Fonksiyon artık context alıyor ve context-aware bekleme yapıyor.
+func Connect(ctx context.Context, url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.Error, error) {
 	var conn *amqp091.Connection
 	var err error
-	for i := 0; i < 10; i++ {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		default:
+		}
+
 		conn, err = amqp091.Dial(url)
 		if err == nil {
 			log.Info().Msg("RabbitMQ bağlantısı başarılı.")
-			ch, err := conn.Channel()
-			if err != nil {
-				log.Fatal().Err(err).Msg("RabbitMQ kanalı oluşturulamadı")
+			ch, chErr := conn.Channel()
+			if chErr != nil {
+				return nil, nil, fmt.Errorf("RabbitMQ kanalı oluşturulamadı: %w", chErr)
 			}
 			closeChan := make(chan *amqp091.Error)
 			conn.NotifyClose(closeChan)
-			return ch, closeChan
+			return ch, closeChan, nil
 		}
-		log.Warn().Err(err).Int("attempt", i+1).Int("max_attempts", 10).Msg("RabbitMQ'ya bağlanılamadı, 5 saniye sonra tekrar denenecek...")
-		time.Sleep(5 * time.Second)
+
+		if ctx.Err() == nil {
+			log.Warn().Err(err).Msg("RabbitMQ'ya bağlanılamadı, 5 saniye sonra tekrar denenecek...")
+		}
+
+		select {
+		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
 	}
-	log.Fatal().Err(err).Msgf("Maksimum deneme (%d) sonrası RabbitMQ'ya bağlanılamadı", 10)
-	return nil, nil
 }
 
 func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
 	err := ch.ExchangeDeclare(
 		exchangeName,
-		"topic", // <<< DEĞİŞİKLİK BURADA: 'fanout' -> 'topic'
+		"topic",
 		true,
 		false,
 		false,
@@ -50,7 +61,8 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 		nil,
 	)
 	if err != nil {
-		log.Fatal().Err(err).Str("exchange", exchangeName).Msg("Exchange deklare edilemedi")
+		log.Error().Err(err).Str("exchange", exchangeName).Msg("Exchange deklare edilemedi")
+		return
 	}
 
 	q, err := ch.QueueDeclare(
@@ -62,25 +74,28 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 		nil,
 	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Kalıcı CDR kuyruğu oluşturulamadı")
+		log.Error().Err(err).Msg("Kalıcı CDR kuyruğu oluşturulamadı")
+		return
 	}
 
 	err = ch.QueueBind(
 		q.Name,
-		"#", // <<< DEĞİŞİKLİK BURADA: "" -> "#" (tüm konuları dinle)
+		"#",
 		exchangeName,
 		false,
 		nil,
 	)
 	if err != nil {
-		log.Fatal().Err(err).Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kuyruk exchange'e bağlanamadı")
+		log.Error().Err(err).Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kuyruk exchange'e bağlanamadı")
+		return
 	}
 
 	log.Info().Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kalıcı kuyruk başarıyla exchange'e bağlandı.")
 
 	err = ch.Qos(1, 0, false)
 	if err != nil {
-		log.Fatal().Err(err).Msg("QoS ayarı yapılamadı.")
+		log.Error().Err(err).Msg("QoS ayarı yapılamadı.")
+		return
 	}
 
 	msgs, err := ch.Consume(
@@ -93,7 +108,8 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 		nil,
 	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Mesajlar tüketilemedi")
+		log.Error().Err(err).Msg("Mesajlar tüketilemedi")
+		return
 	}
 
 	log.Info().Str("queue", q.Name).Msg("Kuyruk dinleniyor, mesajlar bekleniyor...")
