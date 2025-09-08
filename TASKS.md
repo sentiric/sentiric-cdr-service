@@ -1,4 +1,4 @@
-# 📊 Sentiric CDR Service - Görev Listesi (v2.0 - Dayanıklılık ve Bütünlük)
+# 📊 Sentiric CDR Service - Görev Listesi (v2.1 - Stabilite ve Bütünlük)
 
 Bu belge, cdr-service'in geliştirme yol haritasını, tamamlanan görevleri ve mevcut öncelikleri tanımlar.
 
@@ -13,39 +13,26 @@ Bu belge, cdr-service'in geliştirme yol haritasını, tamamlanan görevleri ve 
 
 ---
 
-### **FAZ 2: Dayanıklılık ve Veri Bütünlüğü (Mevcut Odak)**
+### **FAZ 2: Dayanıklılık ve Veri Bütünlüğü (Tamamlandı)**
 
 **Amaç:** Servisin başlatılmasını daha dayanıklı hale getirmek, olay sırasından kaynaklanabilecek veri kaybını önlemek ve kod tabanını standartlara uygun, temiz bir hale getirmek.
 
--   **Görev ID: CDR-BUG-02 - Olay Sırası Yarış Durumunu (Race Condition) Çözme (KRİTİK)**
-    -   **Durum:** ⬜ **Yapılacak (Öncelik 1)**
-    -   **Problem Tanımı:** Mevcut mantık, `call.started` olayının her zaman `user.identified.for_call`'dan önce geleceğini varsaymaktadır. Olayların ters sırada gelmesi durumunda kullanıcı/tenant bilgisi kalıcı olarak kaybolmaktadır.
-    -   **Çözüm Stratejisi:** Veritabanı yazma işlemleri "UPSERT" (INSERT ... ON CONFLICT DO UPDATE) mantığına geçirilecektir. `handleCallStarted` ve `handleUserIdentified` fonksiyonları, `calls` tablosuna kayıt eklerken veya güncellerken, kaydın önceden var olup olmamasından etkilenmeyecek şekilde yeniden yazılacaktır. Bu, olay sırasından bağımsız olarak veri bütünlüğünü garanti altına alacaktır.
+-   [x] **Görev ID: CDR-BUG-02 - Olay Sırası Yarış Durumunu (Race Condition) Çözme**
+-   [x] **Görev ID: CDR-REFACTOR-01 - Dayanıklı Başlatma ve Graceful Shutdown**
+-   [x] **Görev ID: CDR-IMPRV-01 - Dockerfile Güvenlik ve Standardizasyonu**
+-   [x] **Görev ID: CDR-CLEANUP-01 - Gereksiz Kodların Temizlenmesi**
+-   [x] **Görev ID: CDR-IMPRV-03 - Log Zaman Damgasını Standardize Etme**
 
--   **Görev ID: CDR-REFACTOR-01 - Dayanıklı Başlatma ve Graceful Shutdown**
-    -   **Durum:** ⬜ **Yapılacak (Öncelik 2)**
-    -   **Problem Tanımı:** Servis, başlangıçta bağımlılıkları (Postgres, RabbitMQ) hazır değilse `log.Fatal` ile çökmektedir. Bu, dağıtık ortamlarda kırılgan bir davranıştır.
-    -   **Çözüm Stratejisi:** `agent-service`'te uygulanan dayanıklı başlatma mimarisi buraya da uygulanacaktır. `main.go` ve bağlantı fonksiyonları, servisin hemen başlayıp arka planda periyodik olarak bağlantı denemeleri yapacağı ve `CTRL+C` ile her an kontrollü bir şekilde kapatılabileceği şekilde yeniden yapılandırılacaktır.
+---
 
--   **Görev ID: CDR-IMPRV-01 - Dockerfile Güvenlik ve Standardizasyonu**
-    -   **Durum:** ⬜ **Yapılacak**
-    -   **Açıklama:** `Dockerfile`, root kullanıcısıyla çalışmakta ve platformdaki diğer Go servislerinden farklı olarak `alpine` tabanını kullanmaktadır.
-    -   **Kabul Kriterleri:**
-        -   [ ] `Dockerfile` tabanı, tutarlılık için `debian:bookworm-slim` olarak güncellenmelidir.
-        -   [ ] Güvenlik en iyi uygulamalarına uymak için, imaj içinde root olmayan bir `appuser` oluşturulmalı ve uygulama bu kullanıcı ile çalıştırılmalıdır.
+### **FAZ 3: Gelecek Vizyonu**
 
--   **Görev ID: CDR-CLEANUP-01 - Gereksiz Kodların Temizlenmesi**
-    -   **Durum:** ⬜ **Yapılacak**
-    -   **Açıklama:** `internal/database/postgres.go` dosyasında `cdr-service`'in sorumluluk alanına girmeyen `GetAnnouncementPathFromDB` ve `GetTemplateFromDB` fonksiyonları bulunmaktadır.
-    -   **Kabul Kriterleri:**
-        -   [ ] Bu iki fonksiyon ve bunlarla ilgili olası testler kod tabanından tamamen kaldırılmalıdır.
+**Amaç:** Servisin yeteneklerini, daha detaylı analiz ve raporlama ihtiyaçlarını karşılayacak şekilde genişletmek.
 
--   **Görev ID: CDR-IMPRV-03 - Log Zaman Damgasını Standardize Etme**
-    -   **Durum:** ⬜ **Yapılacak**
-    -   **Açıklama:** Loglardaki zaman damgaları, platform standardı olan UTC ve RFC3339 formatında değildir.
-    -   **Kabul Kriterleri:**
-        -   [ ] `internal/logger/logger.go` dosyası, `agent-service`'teki standartlaştırılmış versiyon ile güncellenmelidir.
+-   **Görev ID: CDR-FEAT-01 - Detaylı AI Etkileşim Loglaması**
+    -   **Durum:** ⬜ **Planlandı**
+    -   **Açıklama:** `agent-service` tarafından yayınlanacak yeni olayları (`dialog.turn.completed` gibi) dinleyerek, her bir diyalog adımında kullanıcının ne söylediğini, AI'ın ne cevap verdiğini ve RAG sürecinde hangi bilgilerin kullanıldığını `call_dialog_events` adında yeni bir tabloya kaydetmek. Bu, konuşma analizi için paha biçilmez bir veri sağlayacaktır.
 
--   **Görev ID: CDR-BUG-01 - Eksik Kullanıcı/Tenant Verisi Sorunu (Güncellendi)**
-    -   **Durum:** 🟧 **Bloklandı (AGENT-BUG-04 bekleniyor, CDR-BUG-02 ile çözülecek)**
-    -   **Açıklama:** Bu görevin asıl nedeni `agent-service`'in olay yayınlamamasıdır. Ancak, `CDR-BUG-02` görevi tamamlandığında, `cdr-service` olayların sırasından etkilenmeyeceği için bu sorun da temelden çözülmüş olacaktır. Bu görev, `CDR-BUG-02`'nin doğrulaması olarak takip edilecektir.
+-   **Görev ID: CDR-FEAT-02 - Maliyet Hesaplama**
+    -   **Durum:** ⬜ **Planlandı**
+    -   **Açıklama:** Her çağrı sonunda, kullanılan STT, TTS ve LLM servislerinin süre/token bilgilerini içeren olayları (`cost.usage.reported` gibi) dinleyerek, `calls` tablosuna her bir çağrının yaklaşık maliyetini eklemek.

@@ -17,37 +17,38 @@ Bu servisin tek görevi, platformda olan biten **her şeyi sessizce dinlemek ve 
 
 ## 2. Uçtan Uca Kayıt Akışı
 
+`cdr-service`, olayların geliş sırasından etkilenmeyecek şekilde **dayanıklı** olarak tasarlanmıştır. `call.started` ve `user.identified.for_call` olayları hangi sırada gelirse gelsin, sonuçta `calls` tablosunda tutarlı bir kayıt oluşur.
+
 ```mermaid
 sequenceDiagram
     participant SignalingService as SIP Signaling Service
+    participant AgentService as Agent Service
     participant RabbitMQ
     participant CDRService as CDR Service
-    participant UserService as User Service
     participant PostgreSQL
 
+    Note over SignalingService, AgentService: Bir çağrı başlar ve agent kullanıcıyı tanımlar...
+
     SignalingService->>RabbitMQ: `call.started` olayını yayınlar
+    AgentService->>RabbitMQ: `user.identified.for_call` olayını yayınlar
     
-    RabbitMQ-->>CDRService: Olayı tüketir
+    Note over RabbitMQ, CDRService: Olaylar CDR servisine sırası garanti olmadan ulaşır.
     
-    Note right of CDRService: Olayın ham halini `call_events`'e yazar.
+    RabbitMQ-->>CDRService: `call.started` olayını tüketir
+    Note right of CDRService: `calls` tablosunda UPSERT yapar (call_id, start_time).
+    CDRService->>PostgreSQL: INSERT... ON CONFLICT DO UPDATE...
 
-    CDRService->>PostgreSQL: INSERT INTO call_events (payload: {...})
-    
-    Note right of CDRService: Kullanıcıyı bulmak için arayan numarasını alır.
+    RabbitMQ-->>CDRService: `user.identified.for_call` olayını tüketir
+    Note right of CDRService: `calls` tablosunda UPSERT yapar (call_id, user_id, tenant_id).
+    CDRService->>PostgreSQL: INSERT... ON CONFLICT DO UPDATE...
 
-    CDRService->>UserService: FindUserByContact(arayan_numarasi)
-    UserService-->>CDRService: User(id, tenant_id)
-    
-    Note right of CDRService: Özet kaydı `calls` tablosuna oluşturur.
-
-    CDRService->>PostgreSQL: INSERT INTO calls (call_id, user_id, tenant_id, start_time, status='STARTED')
-
-
+    Note over SignalingService, AgentService: Çağrı bir süre sonra biter...
 
     SignalingService->>RabbitMQ: `call.ended` olayını yayınlar
-    RabbitMQ-->>CDRService: Olayı tüketir
+    RabbitMQ-->>CDRService: `call.ended` olayını tüketir
     
-    Note right of CDRService: İlgili özet kaydını günceller.
+    Note right of CDRService: İlgili `calls` kaydını son bilgilerle günceller.
     
     CDRService->>PostgreSQL: UPDATE calls SET end_time, duration, status='COMPLETED' WHERE call_id=...
 ```
+---
