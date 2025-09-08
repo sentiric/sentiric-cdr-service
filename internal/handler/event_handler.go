@@ -1,4 +1,3 @@
-// File: sentiric-cdr-service/internal/handler/event_handler.go (TAM VE DOĞRU HALİ)
 package handler
 
 import (
@@ -109,26 +108,28 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 	return nil
 }
 
+// DEĞİŞİKLİK: Race condition'ı çözmek için UPSERT mantığı kullanılıyor.
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor.")
+	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
 
-	// DÜZELTME: ON CONFLICT DO NOTHING kullanarak, mevcut bir kaydın üzerine yazılmasını engelliyoruz.
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
 		VALUES ($1, $2, 'STARTED')
-		ON CONFLICT (call_id) DO NOTHING
+		ON CONFLICT (call_id) DO UPDATE SET
+			start_time = COALESCE(calls.start_time, EXCLUDED.start_time),
+			updated_at = NOW()
 	`
 	res, err := h.db.Exec(query, event.CallID, event.Timestamp)
 	if err != nil {
 		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) başlangıç verisi yazılamadı.")
-		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_insert_failed").Inc()
+		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_upsert_failed").Inc()
 		return
 	}
 
 	if rows, _ := res.RowsAffected(); rows > 0 {
-		l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla oluşturuldu.")
+		l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla yazıldı/güncellendi.")
 	} else {
-		l.Warn().Msg("Bu çağrı için zaten bir başlangıç kaydı mevcut. Yinelenen 'call.started' olayı görmezden gelindi.")
+		l.Warn().Msg("Yinelenen 'call.started' olayı işlendi, mevcut kayıt güncellenmedi (zaten aynı).")
 	}
 }
 
@@ -143,7 +144,7 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	var duration int
 	if answerTime.Valid {
 		duration = int(event.Timestamp.Sub(answerTime.Time).Seconds())
-	} else {
+	} else if startTime.Valid {
 		duration = int(event.Timestamp.Sub(startTime.Time).Seconds())
 	}
 	if duration < 0 {
@@ -203,6 +204,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 	l.Info().Msg("CDR 'recording_url' ile başarıyla güncellendi.")
 }
 
+// DEĞİŞİKLİK: Race condition'ı çözmek için UPSERT mantığı kullanılıyor.
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	var payload UserIdentifiedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -212,22 +214,25 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	}
 
 	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
-	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor.")
+	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor (UPSERT).")
 
 	query := `
-		UPDATE calls
-		SET user_id = $1, contact_id = $2, tenant_id = $3, updated_at = NOW()
-		WHERE call_id = $4 AND status != 'COMPLETED'
+		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status)
+		VALUES ($1, $2, $3, $4, 'IDENTIFIED')
+		ON CONFLICT (call_id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			contact_id = EXCLUDED.contact_id,
+			tenant_id = EXCLUDED.tenant_id,
+			status = COALESCE(calls.status, 'IDENTIFIED'), -- Mevcut durumu koru, yoksa IDENTIFIED yap
+			updated_at = NOW()
 	`
-	res, err := h.db.Exec(query, payload.UserID, payload.ContactID, payload.TenantID, payload.CallID)
+	res, err := h.db.Exec(query, payload.CallID, payload.UserID, payload.ContactID, payload.TenantID)
 	if err != nil {
-		l.Error().Err(err).Msg("CDR kullanıcı bilgileriyle güncellenemedi.")
-		h.eventsFailed.WithLabelValues(payload.EventType, "db_summary_update_failed").Inc()
+		l.Error().Err(err).Msg("CDR kullanıcı bilgileriyle güncellenemedi (UPSERT).")
+		h.eventsFailed.WithLabelValues(payload.EventType, "db_summary_upsert_failed").Inc()
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows > 0 {
-		l.Info().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla güncellendi.")
-	} else {
-		l.Warn().Msg("Kullanıcı bilgisiyle güncellenecek CDR kaydı bulunamadı (muhtemelen çağrı zaten tamamlanmış).")
+		l.Info().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla yazıldı/güncellendi.")
 	}
 }
