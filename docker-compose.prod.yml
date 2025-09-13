@@ -16,6 +16,7 @@ services:
   # --------------------------------------------------
   cdr-service:
     image: ghcr.io/sentiric/sentiric-cdr-service:${TAG:-latest}
+    env_file: ["${ENV_FILE_PATH}"]
     volumes: 
       - "${CONFIG_REPO_PATH}:/sentiric-config:ro"
       - "${CERTIFICATES_REPO_PATH}:/sentiric-certificates:ro"
@@ -27,12 +28,9 @@ services:
     networks:
       sentiric-net:
         ipv4_address: ${CDR_SERVICE_IPV4_ADDRESS}
-    dns:
-      - ${PRIMARY_DNS:-8.8.8.8}
-      - ${SECONDARY_DNS:-1.1.1.1} 
     restart: always
-    depends_on: { 
-      postgres: { condition: service_healthy },
-      rabbitmq: { condition: service_healthy },
-      user-service: { condition: service_healthy },
-    }     
+    # depends_on: { 
+    #   postgres: { condition: service_healthy },
+    #   rabbitmq: { condition: service_healthy },
+    #   user-service: { condition: service_healthy },
+    # }     
