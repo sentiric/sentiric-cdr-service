@@ -1,5 +1,14 @@
-# Yerel ve hassas ortam değişkenleri
+# Ortam dosyaları
 .env
+.env.*
+!.env.example          # örnek config dosyasını tut
+
+# Çalışma zamanı veya geçici dosyalar
+.env.generated
+.profile.state
+
+# Loglar
+*.log
 
 # Go derleme çıktıları
 /bin
