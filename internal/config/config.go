@@ -4,16 +4,12 @@ package config
 import (
 	"fmt"
 	"os"
-
-	"github.com/joho/godotenv"
 )
 
 type Config struct {
 	Env         string
 	PostgresURL string
 	RabbitMQURL string
-	// DÜZELTME: QueueName artık kod içinde sabit olduğu için bu alana gerek kalmadı.
-	// QueueName   string
 	MetricsPort string
 
 	// gRPC İstemci Ayarları
@@ -24,14 +20,12 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	godotenv.Load()
+	// godotenv.Load() çağrısı kaldırıldı.
 
 	cfg := &Config{
-		Env:         getEnvWithDefault("ENV", "production"),
-		PostgresURL: getEnv("POSTGRES_URL"),
-		RabbitMQURL: getEnv("RABBITMQ_URL"),
-		// DÜZELTME: Artık bu satıra gerek yok.
-		// QueueName:          getEnvWithDefault("CDR_QUEUE_NAME", "call.events"),
+		Env:                getEnvWithDefault("ENV", "production"),
+		PostgresURL:        getEnv("POSTGRES_URL"),
+		RabbitMQURL:        getEnv("RABBITMQ_URL"),
 		MetricsPort:        getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
 		UserServiceGrpcURL: getEnv("USER_SERVICE_GRPC_URL"),
 		CdrServiceCertPath: getEnv("CDR_SERVICE_CERT_PATH"),
@@ -40,7 +34,12 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" || cfg.UserServiceGrpcURL == "" {
-		return nil, fmt.Errorf("kritik ortam değişkenleri eksik: POSTGRES_URL, RABBITMQ_URL, USER_SERVICE_GRPC_URL")
+		// Hata mesajını daha anlaşılır hale getirelim.
+		missingVars := ""
+		if cfg.PostgresURL == "" { missingVars += " POSTGRES_URL" }
+		if cfg.RabbitMQURL == "" { missingVars += " RABBITMQ_URL" }
+		if cfg.UserServiceGrpcURL == "" { missingVars += " USER_SERVICE_GRPC_URL" }
+		return nil, fmt.Errorf("kritik ortam değişkenleri eksik:%s", missingVars)
 	}
 
 	return cfg, nil
