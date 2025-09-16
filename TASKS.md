@@ -25,16 +25,14 @@ Bu belge, cdr-service'in geliştirme yol haritasını, tamamlanan görevleri ve 
 
 ---
 
-### **FAZ 2.5: Veri Bütünlüğü Doğrulaması (Sıradaki Öncelik)**
+### **FAZ 2.5: Veri Bütünlüğü Doğrulaması (Mevcut Odak)**
 
 -   **Görev ID: CDR-FIX-01 - `user.identified.for_call` Olayı Eksikliğini Yönetme**
     -   **Durum:** ⬜ **Yapılacak (Öncelik 1 - YÜKSEK)**
     -   **Bağımlılık:** `agent-service`'teki `AGENT-BUG-03`'ün tamamlanması.
-    -   **Açıklama:** Canlı testlerde, `agent-service`'in `user.identified.for_call` olayını yayınlamaması nedeniyle `calls` tablosundaki `user_id`, `contact_id` ve `tenant_id` alanlarının `null` kaldığı tespit edildi. `agent-service`'teki hata düzeltildikten sonra, bu servisin gelen `user.identified.for_call` olayını doğru bir şekilde işlediği ve `calls` tablosunu `UPSERT` mantığıyla güncellediği doğrulanmalıdır.
+    -   **Açıklama:** Canlı test logları, `agent-service`'in `user.identified.for_call` olayını yayınlamadığını doğrulamıştır. Bu nedenle `calls` tablosundaki `user_id`, `contact_id` ve `tenant_id` alanları `null` kalmaktadır. `agent-service`'teki hata düzeltildikten sonra, bu servisin gelen `user.identified.for_call` olayını doğru bir şekilde işlediği ve `calls` tablosunu `UPSERT` mantığıyla güncellediği doğrulanmalıdır. Bu, bir kod değişikliğinden çok bir **doğrulama görevidir.**
     -   **Kabul Kriterleri:**
-        -   [ ] `internal/handler/event_handler.go`'daki `handleUserIdentified` fonksiyonunun `UPSERT` mantığı gözden geçirilmelidir.
         -   [ ] `agent-service`'teki düzeltme yapıldıktan sonra, yeni bir test araması yapıldığında, `calls` tablosundaki ilgili kaydın `user_id`, `contact_id` ve `tenant_id` alanlarının doğru verilerle doldurulduğu veritabanından doğrulanmalıdır.
-
 ---
 
 ### **FAZ 3: Gelecek Vizyonu**

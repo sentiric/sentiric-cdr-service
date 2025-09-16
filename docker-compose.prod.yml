@@ -29,8 +29,13 @@ services:
       sentiric-net:
         ipv4_address: ${CDR_SERVICE_IPV4_ADDRESS}
     restart: always
-    # depends_on: { 
-    #   postgres: { condition: service_healthy },
-    #   rabbitmq: { condition: service_healthy },
-    #   user-service: { condition: service_healthy },
-    # }     
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "12052"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s    
+    # depends_on: 
+    #   postgres: { condition: service_healthy }
+    #   rabbitmq: { condition: service_healthy }
+    #   user-service: { condition: service_healthy } 
