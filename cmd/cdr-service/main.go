@@ -51,10 +51,9 @@ func main() {
 	go func() {
 		defer wg.Done()
 
-		// Arka planda dayanıklı bir şekilde bağlantıları kur.
 		db, rabbitCh, rabbitCloseChan := setupInfrastructure(ctx, cfg, appLog)
 		if ctx.Err() != nil {
-			return // Kurulum iptal edildi.
+			return
 		}
 		defer db.Close()
 		defer rabbitCh.Close()
@@ -62,7 +61,7 @@ func main() {
 		userClient, err := client.NewUserServiceClient(cfg)
 		if err != nil {
 			appLog.Error().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı, servis sonlandırılıyor.")
-			cancel() // Hata kritik, tüm uygulamayı durdur.
+			cancel()
 			return
 		}
 
@@ -71,14 +70,13 @@ func main() {
 		var consumerWg sync.WaitGroup
 		go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &consumerWg)
 
-		// Context iptal edilene veya RabbitMQ bağlantısı kopana kadar bekle.
 		select {
 		case <-ctx.Done():
 		case err := <-rabbitCloseChan:
 			if err != nil {
 				appLog.Error().Err(err).Msg("RabbitMQ bağlantısı koptu, servis durduruluyor.")
 			}
-			cancel() // Diğer her şeyi durdurmak için context'i iptal et.
+			cancel()
 		}
 
 		appLog.Info().Msg("RabbitMQ tüketicisinin bitmesi bekleniyor...")
@@ -96,14 +94,13 @@ func main() {
 	appLog.Info().Msg("Tüm servisler başarıyla durduruldu. Çıkış yapılıyor.")
 }
 
-// setupInfrastructure, altyapı bağlantılarını kurar.
 func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog.Logger) (
 	db *sql.DB,
 	rabbitCh *amqp091.Channel,
 	closeChan <-chan *amqp091.Error,
 ) {
 	var infraWg sync.WaitGroup
-	infraWg.Add(2) // Postgres ve RabbitMQ için
+	infraWg.Add(2)
 
 	go func() {
 		defer infraWg.Done()
