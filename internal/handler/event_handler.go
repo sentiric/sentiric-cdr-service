@@ -1,3 +1,4 @@
+// sentiric-cdr-service/internal/handler/event_handler.go
 package handler
 
 import (
@@ -7,8 +8,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
-	userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1"
+	// userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1" // BU SATIRI SİLİN
 )
+
 
 type EventPayload struct {
 	EventType  string          `json:"eventType"`
@@ -39,16 +41,16 @@ type CallRecordingAvailablePayload struct {
 
 type EventHandler struct {
 	db              *sql.DB
-	userClient      userv1.UserServiceClient
+	// userClient      userv1.UserServiceClient // BU SATIRI SİLİN
 	log             zerolog.Logger
 	eventsProcessed *prometheus.CounterVec
 	eventsFailed    *prometheus.CounterVec
 }
 
-func NewEventHandler(db *sql.DB, uc userv1.UserServiceClient, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
+func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
 	return &EventHandler{
 		db:              db,
-		userClient:      uc,
+		// userClient:      uc, // BU SATIRI SİLİN
 		log:             log,
 		eventsProcessed: processed,
 		eventsFailed:    failed,

@@ -1,3 +1,4 @@
+// sentiric-cdr-service/cmd/cdr-service/main.go
 package main
 
 import (
@@ -11,7 +12,7 @@ import (
 
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/rs/zerolog"
-	"github.com/sentiric/sentiric-cdr-service/internal/client"
+	// "github.com/sentiric/sentiric-cdr-service/internal/client" // BU SATIRI SİLİN
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
 	"github.com/sentiric/sentiric-cdr-service/internal/handler"
@@ -58,14 +59,16 @@ func main() {
 		defer db.Close()
 		defer rabbitCh.Close()
 
-		userClient, err := client.NewUserServiceClient(cfg)
-		if err != nil {
-			appLog.Error().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı, servis sonlandırılıyor.")
-			cancel()
-			return
-		}
+		// userClient ile ilgili tüm bölümü silin.
+		// userClient, err := client.NewUserServiceClient(cfg)
+		// if err != nil {
+		// 	appLog.Error().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı, servis sonlandırılıyor.")
+		// 	cancel()
+		// 	return
+		// }
 
-		eventHandler := handler.NewEventHandler(db, userClient, appLog, metrics.EventsProcessed, metrics.EventsFailed)
+		// eventHandler artık userClient almayacak.
+		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 		var consumerWg sync.WaitGroup
 		go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &consumerWg)
