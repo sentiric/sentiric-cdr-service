@@ -1,3 +1,4 @@
+// DOSYA: sentiric-cdr-service/internal/logger/logger.go
 package logger
 
 import (
@@ -8,23 +9,25 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func New(serviceName, env string) zerolog.Logger {
+// DÜZELTME: Fonksiyon imzası logLevel alacak şekilde güncellendi.
+func New(serviceName, env, logLevel string) zerolog.Logger {
 	var logger zerolog.Logger
 
-	// Tüm logların UTC zaman diliminde ve RFC3339 formatında olmasını sağlıyoruz.
+	level, err := zerolog.ParseLevel(logLevel)
+	if err != nil {
+		level = zerolog.InfoLevel
+		log.Warn().Msgf("Geçersiz LOG_LEVEL '%s', varsayılan olarak 'info' kullanılıyor.", logLevel)
+	}
+
 	zerolog.TimeFieldFormat = time.RFC3339
 
 	if env == "development" {
-		// Geliştirme ortamında, okunabilirliği artırmak için ConsoleWriter kullanıyoruz.
-		output := zerolog.ConsoleWriter{
-			Out:        os.Stderr,
-			TimeFormat: time.RFC3339,
-		}
+		output := zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
 		logger = log.Output(output).With().Timestamp().Str("service", serviceName).Logger()
 	} else {
-		// Üretim/Core ortamında, performans için doğrudan JSON formatında yazıyoruz.
 		logger = zerolog.New(os.Stderr).With().Timestamp().Str("service", serviceName).Logger()
 	}
-
-	return logger
+    
+    // DÜZELTME: Belirlenen seviye logger'a uygulanıyor.
+	return logger.Level(level)
 }

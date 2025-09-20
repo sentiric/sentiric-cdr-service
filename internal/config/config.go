@@ -1,4 +1,4 @@
-// ========== FILE: sentiric-cdr-service/internal/config/config.go ==========
+// DOSYA: sentiric-cdr-service/internal/config/config.go
 package config
 
 import (
@@ -7,12 +7,11 @@ import (
 )
 
 type Config struct {
-	Env         string
-	PostgresURL string
-	RabbitMQURL string
-	MetricsPort string
-
-	// gRPC İstemci Ayarları
+	Env                string
+	LogLevel           string // YENİ ALAN EKLENDİ
+	PostgresURL        string
+	RabbitMQURL        string
+	MetricsPort        string
 	UserServiceGrpcURL string
 	CdrServiceCertPath string
 	CdrServiceKeyPath  string
@@ -20,10 +19,9 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	// godotenv.Load() çağrısı kaldırıldı.
-
 	cfg := &Config{
 		Env:                getEnvWithDefault("ENV", "production"),
+		LogLevel:           getEnvWithDefault("LOG_LEVEL", "info"), // YENİ ALAN OKUNUYOR
 		PostgresURL:        getEnv("POSTGRES_URL"),
 		RabbitMQURL:        getEnv("RABBITMQ_URL"),
 		MetricsPort:        getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),

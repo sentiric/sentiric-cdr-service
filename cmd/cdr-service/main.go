@@ -28,15 +28,16 @@ var (
 )
 
 const serviceName = "cdr-service"
-
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
 	}
 
-	appLog := logger.New(serviceName, cfg.Env)
-	appLog.Info().
+
+	appLog := logger.New(serviceName, cfg.Env, cfg.LogLevel) 
+
+		appLog.Info().
 		Str("version", ServiceVersion).
 		Str("commit", GitCommit).
 		Str("build_date", BuildDate).
