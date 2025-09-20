@@ -8,7 +8,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
-	// userv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/user/v1" // BU SATIRI SİLİN
 )
 
 
@@ -41,7 +40,6 @@ type CallRecordingAvailablePayload struct {
 
 type EventHandler struct {
 	db              *sql.DB
-	// userClient      userv1.UserServiceClient // BU SATIRI SİLİN
 	log             zerolog.Logger
 	eventsProcessed *prometheus.CounterVec
 	eventsFailed    *prometheus.CounterVec
@@ -50,7 +48,6 @@ type EventHandler struct {
 func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
 	return &EventHandler{
 		db:              db,
-		// userClient:      uc, // BU SATIRI SİLİN
 		log:             log,
 		eventsProcessed: processed,
 		eventsFailed:    failed,
@@ -69,7 +66,6 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	l := h.log.With().Str("call_id", event.CallID).Str("trace_id", event.TraceID).Str("event_type", event.EventType).Logger()
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
 
-	// Bu log, bir iş akışının başlangıcı olduğu için INFO olarak kalmalı.
 	l.Info().Msg("CDR olayı alındı, işleniyor...")
 
 	if err := h.logRawEvent(l, &event); err != nil {
@@ -89,7 +85,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	case "call.recording.available":
 		h.handleRecordingAvailable(l, &event)
 	default:
-		// Bu bir hata değil, sadece işlenmeyen bir olay. DEBUG seviyesi daha uygun.
+		// DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
 }
@@ -108,13 +104,12 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
 	}
-	// Bu log gereksiz gürültü yaratıyor, DEBUG seviyesine alıyoruz.
+    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 	l.Debug().Msg("Ham CDR olayı başarıyla veritabanına kaydedildi.")
 	return nil
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// Bu log bir kilometre taşı, INFO olarak kalması doğru.
 	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
 
 	query := `
@@ -132,7 +127,7 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	}
 
 	if rows, _ := res.RowsAffected(); rows > 0 {
-		// Bu log da gereksiz, DEBUG'a çekiyoruz.
+        // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla yazıldı/güncellendi.")
 	} else {
 		l.Warn().Msg("Yinelenen 'call.started' olayı işlendi, mevcut kayıt güncellenmedi (zaten aynı).")
@@ -174,7 +169,6 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows > 0 {
-		// Bu bir kilometre taşı, INFO olarak kalması doğru.
 		l.Info().Int("duration", duration).Str("disposition", disposition).Msg("Özet çağrı kaydı (CDR) başarıyla sonlandırıldı.")
 	}
 }
@@ -192,6 +186,7 @@ func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload)
 		l.Error().Err(err).Msg("CDR 'answer_time' ile güncellenemedi.")
 		return
 	}
+    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 	l.Debug().Msg("CDR 'answer_time' ile güncellendi.")
 }
 
@@ -208,6 +203,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 		l.Error().Err(err).Msg("CDR 'recording_url' ile güncellenemedi.")
 		return
 	}
+    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 	l.Debug().Msg("CDR 'recording_url' ile güncellendi.")
 }
 
@@ -239,6 +235,7 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows > 0 {
+        // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla yazıldı/güncellendi.")
 	}
 }
