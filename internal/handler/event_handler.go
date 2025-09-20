@@ -85,7 +85,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	case "call.recording.available":
 		h.handleRecordingAvailable(l, &event)
 	default:
-		// DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+		// DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
 }
@@ -104,13 +104,14 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
 	}
-    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("Ham CDR olayı başarıyla veritabanına kaydedildi.")
 	return nil
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	l.Info().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
+	// DÜZELTME: Bu log DEBUG seviyesine çekildi.
+	l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
 
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
@@ -127,7 +128,7 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	}
 
 	if rows, _ := res.RowsAffected(); rows > 0 {
-        // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+        // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla yazıldı/güncellendi.")
 	} else {
 		l.Warn().Msg("Yinelenen 'call.started' olayı işlendi, mevcut kayıt güncellenmedi (zaten aynı).")
@@ -186,7 +187,7 @@ func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload)
 		l.Error().Err(err).Msg("CDR 'answer_time' ile güncellenemedi.")
 		return
 	}
-    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("CDR 'answer_time' ile güncellendi.")
 }
 
@@ -203,7 +204,7 @@ func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPa
 		l.Error().Err(err).Msg("CDR 'recording_url' ile güncellenemedi.")
 		return
 	}
-    // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("CDR 'recording_url' ile güncellendi.")
 }
 
@@ -216,7 +217,8 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	}
 
 	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
-	l.Info().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor (UPSERT).")
+	// DÜZELTME: Bu log DEBUG seviyesine çekildi.
+	l.Debug().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor (UPSERT).")
 
 	query := `
 		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status)
@@ -235,7 +237,7 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows > 0 {
-        // DEĞİŞİKLİK: Bu logu DEBUG'a çekiyoruz.
+        // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla yazıldı/güncellendi.")
 	}
 }
