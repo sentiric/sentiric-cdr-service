@@ -7,36 +7,30 @@ import (
 )
 
 type Config struct {
-	Env                string
-	LogLevel           string // YENİ ALAN EKLENDİ
-	PostgresURL        string
-	RabbitMQURL        string
-	MetricsPort        string
-	UserServiceGrpcURL string
-	CdrServiceCertPath string
-	CdrServiceKeyPath  string
-	GrpcTlsCaPath      string
+	Env         string
+	LogLevel    string
+	PostgresURL string
+	RabbitMQURL string
+	MetricsPort string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Env:                getEnvWithDefault("ENV", "production"),
-		LogLevel:           getEnvWithDefault("LOG_LEVEL", "info"), // YENİ ALAN OKUNUYOR
-		PostgresURL:        getEnv("POSTGRES_URL"),
-		RabbitMQURL:        getEnv("RABBITMQ_URL"),
-		MetricsPort:        getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
-		UserServiceGrpcURL: getEnv("USER_SERVICE_GRPC_URL"),
-		CdrServiceCertPath: getEnv("CDR_SERVICE_CERT_PATH"),
-		CdrServiceKeyPath:  getEnv("CDR_SERVICE_KEY_PATH"),
-		GrpcTlsCaPath:      getEnv("GRPC_TLS_CA_PATH"),
+		Env:         getEnvWithDefault("ENV", "production"),
+		LogLevel:    getEnvWithDefault("LOG_LEVEL", "info"),
+		PostgresURL: getEnv("POSTGRES_URL"),
+		RabbitMQURL: getEnv("RABBITMQ_URL"),
+		MetricsPort: getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
 	}
 
-	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" || cfg.UserServiceGrpcURL == "" {
-		// Hata mesajını daha anlaşılır hale getirelim.
+	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" {
 		missingVars := ""
-		if cfg.PostgresURL == "" { missingVars += " POSTGRES_URL" }
-		if cfg.RabbitMQURL == "" { missingVars += " RABBITMQ_URL" }
-		if cfg.UserServiceGrpcURL == "" { missingVars += " USER_SERVICE_GRPC_URL" }
+		if cfg.PostgresURL == "" {
+			missingVars += " POSTGRES_URL"
+		}
+		if cfg.RabbitMQURL == "" {
+			missingVars += " RABBITMQ_URL"
+		}
 		return nil, fmt.Errorf("kritik ortam değişkenleri eksik:%s", missingVars)
 	}
 

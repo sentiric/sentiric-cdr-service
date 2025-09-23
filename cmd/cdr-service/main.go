@@ -12,7 +12,8 @@ import (
 
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/rs/zerolog"
-	// "github.com/sentiric/sentiric-cdr-service/internal/client" // BU SATIRI SİLİN
+
+	// SİLİNDİ: "github.com/sentiric/sentiric-cdr-service/internal/client"
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
 	"github.com/sentiric/sentiric-cdr-service/internal/handler"
@@ -28,16 +29,16 @@ var (
 )
 
 const serviceName = "cdr-service"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
 	}
 
+	appLog := logger.New(serviceName, cfg.Env, cfg.LogLevel)
 
-	appLog := logger.New(serviceName, cfg.Env, cfg.LogLevel) 
-
-		appLog.Info().
+	appLog.Info().
 		Str("version", ServiceVersion).
 		Str("commit", GitCommit).
 		Str("build_date", BuildDate).
@@ -60,15 +61,7 @@ func main() {
 		defer db.Close()
 		defer rabbitCh.Close()
 
-		// userClient ile ilgili tüm bölümü silin.
-		// userClient, err := client.NewUserServiceClient(cfg)
-		// if err != nil {
-		// 	appLog.Error().Err(err).Msg("User Service gRPC istemcisi oluşturulamadı, servis sonlandırılıyor.")
-		// 	cancel()
-		// 	return
-		// }
-
-		// eventHandler artık userClient almayacak.
+		// Artık userClient bağımlılığı yok
 		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 		var consumerWg sync.WaitGroup
