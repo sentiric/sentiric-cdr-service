@@ -34,9 +34,9 @@ Bu servis birincil olarak bir **tüketicidir (consumer)** ve dışarıya doğrud
 
 ## 🚀 Yerel Geliştirme
 
-1.  **Bağımlılıkları Yükleyin:** `go mod tidy`
-2.  **Ortam Değişkenlerini Ayarlayın:** `.env.docker` dosyasını `.env` olarak kopyalayın.
-3.  **Servisi Çalıştırın:** `go run cmd/cdr-service`
+1.  **Bağımlılıkları Yükleyin:**
+2.  **Ortam Değişkenlerini Ayarlayın:** `.env.example` dosyasını `.env` olarak kopyalayın ve gerekli değişkenleri doldurun.
+3.  **Servisi Çalıştırın:**
 
 ## 🤝 Katkıda Bulunma
 
