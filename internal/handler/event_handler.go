@@ -1,4 +1,4 @@
-// sentiric-cdr-service/internal/handler/event_handler.go
+// ========== DOSYA: sentiric-cdr-service/internal/handler/event_handler.go (TAM VE İYİLEŞTİRİLMİŞ İÇERİK) ==========
 package handler
 
 import (
@@ -9,7 +9,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 )
-
 
 type EventPayload struct {
 	EventType  string          `json:"eventType"`
@@ -66,7 +65,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	l := h.log.With().Str("call_id", event.CallID).Str("trace_id", event.TraceID).Str("event_type", event.EventType).Logger()
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
 
-	l.Info().Msg("CDR olayı alındı, işleniyor...")
+	l.Debug().Msg("CDR olayı alındı, işleniyor...")
 
 	if err := h.logRawEvent(l, &event); err != nil {
 		h.eventsFailed.WithLabelValues(event.EventType, "db_raw_insert_failed").Inc()
@@ -85,7 +84,6 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	case "call.recording.available":
 		h.handleRecordingAvailable(l, &event)
 	default:
-		// DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
 	}
 }
@@ -104,13 +102,11 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *EventPayload) error 
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
 	}
-    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("Ham CDR olayı başarıyla veritabanına kaydedildi.")
 	return nil
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) {
-	// DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
 
 	query := `
@@ -128,7 +124,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *EventPayload) 
 	}
 
 	if rows, _ := res.RowsAffected(); rows > 0 {
-        // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi başarıyla yazıldı/güncellendi.")
 	} else {
 		l.Warn().Msg("Yinelenen 'call.started' olayı işlendi, mevcut kayıt güncellenmedi (zaten aynı).")
@@ -142,7 +137,6 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		l.Warn().Err(err).Msg("Çağrı sonlandırma olayı için başlangıç kaydı bulunamadı. Güncelleme atlanıyor.")
 		return
 	}
-
 	var duration int
 	if answerTime.Valid {
 		duration = int(event.Timestamp.Sub(answerTime.Time).Seconds())
@@ -152,17 +146,11 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 	if duration < 0 {
 		duration = 0
 	}
-
 	disposition := "NO_ANSWER"
 	if answerTime.Valid {
 		disposition = "ANSWERED"
 	}
-
-	query := `
-		UPDATE calls
-		SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW()
-		WHERE call_id = $4
-	`
+	query := ` UPDATE calls SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW() WHERE call_id = $4 `
 	res, err := h.db.Exec(query, event.Timestamp, duration, disposition, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("Özet çağrı kaydı (CDR) güncellenemedi.")
@@ -173,41 +161,34 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *EventPayload) {
 		l.Info().Int("duration", duration).Str("disposition", disposition).Msg("Özet çağrı kaydı (CDR) başarıyla sonlandırıldı.")
 	}
 }
-
 func (h *EventHandler) handleCallAnswered(l zerolog.Logger, event *EventPayload) {
 	var payload CallAnsweredPayload
 	if err := json.Unmarshal(event.RawPayload, &payload); err != nil {
 		l.Error().Err(err).Msg("call.answered olayı parse edilemedi.")
 		return
 	}
-
 	query := `UPDATE calls SET answer_time = $1, disposition = 'ANSWERED', updated_at = NOW() WHERE call_id = $2 AND status != 'COMPLETED'`
 	_, err := h.db.Exec(query, payload.Timestamp, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("CDR 'answer_time' ile güncellenemedi.")
 		return
 	}
-    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("CDR 'answer_time' ile güncellendi.")
 }
-
 func (h *EventHandler) handleRecordingAvailable(l zerolog.Logger, event *EventPayload) {
 	var payload CallRecordingAvailablePayload
 	if err := json.Unmarshal(event.RawPayload, &payload); err != nil {
 		l.Error().Err(err).Msg("call.recording.available olayı parse edilemedi.")
 		return
 	}
-
 	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2`
 	_, err := h.db.Exec(query, payload.RecordingURI, event.CallID)
 	if err != nil {
 		l.Error().Err(err).Msg("CDR 'recording_url' ile güncellenemedi.")
 		return
 	}
-    // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 	l.Debug().Msg("CDR 'recording_url' ile güncellendi.")
 }
-
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 	var payload UserIdentifiedPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -215,9 +196,8 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 		h.eventsFailed.WithLabelValues("user.identified.for_call", "json_unmarshal").Inc()
 		return
 	}
-
 	l = l.With().Str("user_id", payload.UserID).Int32("contact_id", payload.ContactID).Logger()
-	// DÜZELTME: Bu log DEBUG seviyesine çekildi.
+
 	l.Debug().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor (UPSERT).")
 
 	query := `
@@ -237,7 +217,6 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, body []byte) {
 		return
 	}
 	if rows, _ := res.RowsAffected(); rows > 0 {
-        // DÜZELTME: Bu log DEBUG seviyesine çekildi.
 		l.Debug().Msg("Özet çağrı kaydı (CDR) kullanıcı bilgileriyle başarıyla yazıldı/güncellendi.")
 	}
 }
