@@ -3,14 +3,13 @@ package handler
 
 import (
 	"database/sql"
-	"encoding/base64" // YENİ: Standart base64 kütüphanesi
+	"encoding/base64"
 	"encoding/json"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
-	// "google.golang.org/protobuf/types/known/timestamppb" // SİLİNDİ: Kullanılmıyor
 
 	eventv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/event/v1"
 )
@@ -32,62 +31,57 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 }
 
 func (h *EventHandler) HandleEvent(body []byte) {
-	var genericEvent eventv1.GenericEvent
-	if err := proto.Unmarshal(body, &genericEvent); err != nil {
-		h.log.Error().Err(err).Bytes("raw_message", body).Msg("Hata: Mesaj Protobuf formatında değil")
-		h.eventsFailed.WithLabelValues("unknown", "proto_unmarshal").Inc()
+	// [YENİ BASİTLEŞTİRİLMİŞ MANTIK]
+	// Gelen mesajı sırayla bildiğimiz event tiplerine decode etmeye çalış.
+
+	// 1. CallStartedEvent mi?
+	var callStarted eventv1.CallStartedEvent
+	if err := proto.Unmarshal(body, &callStarted); err == nil && callStarted.EventType == "call.started" {
+		l := h.log.With().Str("call_id", callStarted.CallId).Str("event_type", callStarted.EventType).Logger()
+		h.eventsProcessed.WithLabelValues(callStarted.EventType).Inc()
+		l.Info().Msg("Protobuf 'call.started' olayı işleniyor.")
+		if err := h.logRawEvent(l, callStarted.CallId, callStarted.EventType, callStarted.Timestamp.AsTime(), body); err == nil {
+			h.handleCallStarted(l, &callStarted)
+		}
 		return
 	}
 
-	eventType := genericEvent.EventType
-	l := h.log.With().Str("event_type", eventType).Str("trace_id", genericEvent.TraceId).Logger()
-
-	h.eventsProcessed.WithLabelValues(eventType).Inc()
-	l.Debug().Msg("CDR olayı alındı (Protobuf), işleniyor...")
-
-	if err := h.logRawEvent(l, &genericEvent, body); err != nil {
-		h.eventsFailed.WithLabelValues(eventType, "db_raw_insert_failed").Inc()
+	// 2. CallEndedEvent mi?
+	var callEnded eventv1.CallEndedEvent
+	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
+		l := h.log.With().Str("call_id", callEnded.CallId).Str("event_type", callEnded.EventType).Logger()
+		h.eventsProcessed.WithLabelValues(callEnded.EventType).Inc()
+		l.Info().Msg("Protobuf 'call.ended' olayı işleniyor.")
+		if err := h.logRawEvent(l, callEnded.CallId, callEnded.EventType, callEnded.Timestamp.AsTime(), body); err == nil {
+			h.handleCallEnded(l, &callEnded)
+		}
 		return
 	}
 
-	switch eventType {
-	case "call.started":
-		var event eventv1.CallStartedEvent
-		if err := proto.Unmarshal(body, &event); err == nil {
-			h.handleCallStarted(l, &event)
+	// 3. UserIdentified mi?
+	var userIdentified eventv1.UserIdentifiedForCallEvent
+	if err := proto.Unmarshal(body, &userIdentified); err == nil && userIdentified.EventType == "user.identified.for.call" {
+		l := h.log.With().Str("call_id", userIdentified.CallId).Str("event_type", userIdentified.EventType).Logger()
+		h.eventsProcessed.WithLabelValues(userIdentified.EventType).Inc()
+		l.Info().Msg("Protobuf 'user.identified.for.call' olayı işleniyor.")
+		if err := h.logRawEvent(l, userIdentified.CallId, userIdentified.EventType, userIdentified.Timestamp.AsTime(), body); err == nil {
+			h.handleUserIdentified(l, &userIdentified)
 		}
-	case "call.ended":
-		var event eventv1.CallEndedEvent
-		if err := proto.Unmarshal(body, &event); err == nil {
-			h.handleCallEnded(l, &event)
-		}
-	case "user.identified.for.call":
-		var event eventv1.UserIdentifiedForCallEvent
-		if err := proto.Unmarshal(body, &event); err == nil {
-			h.handleUserIdentified(l, &event)
-		}
-	default:
-		l.Debug().Msg("Bu olay tipi için özet CDR işlemi tanımlanmamış, atlanıyor.")
+		return
 	}
+
+	// Hiçbiri değilse hata ver.
+	h.log.Error().Bytes("raw_message", body).Msg("Hata: Mesaj bilinen bir Protobuf formatında değil veya 'eventType' alanı eksik/yanlış.")
+	h.eventsFailed.WithLabelValues("unknown", "proto_unmarshal_unknown_type").Inc()
 }
 
-func (h *EventHandler) logRawEvent(l zerolog.Logger, event *eventv1.GenericEvent, rawPayload []byte) error {
-	var eventTimestamp time.Time
-	ts := event.GetTimestamp()
-	if ts == nil || !ts.IsValid() {
-		eventTimestamp = time.Now().UTC()
-	} else {
-		eventTimestamp = ts.AsTime()
-	}
-
-	// DÜZELTME: Ham binary payload'ı base64'e çevirerek güvenli bir şekilde JSON içinde saklıyoruz.
+func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
 	jsonPayload, _ := json.Marshal(map[string]string{
 		"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload),
 	})
 
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	// CallID yerine TraceID kullanmak olay takibi için daha doğrudur.
-	_, err := h.db.Exec(query, event.TraceId, event.EventType, eventTimestamp, jsonPayload)
+	_, err := h.db.Exec(query, callID, eventType, ts, jsonPayload)
 	if err != nil {
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
@@ -97,9 +91,7 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *eventv1.GenericEvent
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallStartedEvent) {
-	l = l.With().Str("call_id", event.CallId).Logger()
 	l.Debug().Msg("Özet çağrı kaydı (CDR) başlangıç verisi oluşturuluyor/güncelleniyor (UPSERT).")
-
 	query := `
 		INSERT INTO calls (call_id, start_time, status)
 		VALUES ($1, $2, 'STARTED')
@@ -117,7 +109,6 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallSt
 }
 
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEndedEvent) {
-	l = l.With().Str("call_id", event.CallId).Logger()
 	var startTime, answerTime sql.NullTime
 	err := h.db.QueryRow("SELECT start_time, answer_time FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime, &answerTime)
 	if err != nil {
@@ -155,9 +146,8 @@ func (h *EventHandler) handleUserIdentified(l zerolog.Logger, event *eventv1.Use
 		l.Warn().Msg("user.identified.for.call olayı eksik User veya Contact bilgisi içeriyor.")
 		return
 	}
-	l = l.With().Str("call_id", event.CallId).Str("user_id", event.User.Id).Int32("contact_id", event.Contact.Id).Logger()
+	l = l.With().Str("user_id", event.User.Id).Int32("contact_id", event.Contact.Id).Logger()
 	l.Debug().Msg("Kullanıcı kimliği bilgisi alındı, CDR güncelleniyor (UPSERT).")
-
 	query := `
 		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status)
 		VALUES ($1, $2, $3, $4, 'IDENTIFIED')

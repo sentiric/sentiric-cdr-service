@@ -7,7 +7,7 @@ require (
 	github.com/prometheus/client_golang v1.23.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rs/zerolog v1.34.0
-	// YENİ BAĞIMLILIKLAR
+	// DOĞRULANDI: v1.13.5
 	github.com/sentiric/sentiric-contracts v1.13.5
 	google.golang.org/protobuf v1.36.10
 )
