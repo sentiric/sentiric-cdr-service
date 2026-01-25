@@ -3,13 +3,14 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/base64" // YENİ: Standart base64 kütüphanesi
 	"encoding/json"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	// "google.golang.org/protobuf/types/known/timestamppb" // SİLİNDİ: Kullanılmıyor
 
 	eventv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/event/v1"
 )
@@ -44,7 +45,6 @@ func (h *EventHandler) HandleEvent(body []byte) {
 	h.eventsProcessed.WithLabelValues(eventType).Inc()
 	l.Debug().Msg("CDR olayı alındı (Protobuf), işleniyor...")
 
-	// Ham olayı JSON olarak (loglama için) ve binary olarak (payload için) kaydet
 	if err := h.logRawEvent(l, &genericEvent, body); err != nil {
 		h.eventsFailed.WithLabelValues(eventType, "db_raw_insert_failed").Inc()
 		return
@@ -61,7 +61,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		if err := proto.Unmarshal(body, &event); err == nil {
 			h.handleCallEnded(l, &event)
 		}
-	case "user.identified.for_call":
+	case "user.identified.for.call":
 		var event eventv1.UserIdentifiedForCallEvent
 		if err := proto.Unmarshal(body, &event); err == nil {
 			h.handleUserIdentified(l, &event)
@@ -80,12 +80,14 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, event *eventv1.GenericEvent
 		eventTimestamp = ts.AsTime()
 	}
 
-	// Ham payload'ı veritabanına JSONB olarak kaydetmek için JSON'a çevirelim (okunabilirlik için)
-	// Eğer performans kritikse, doğrudan binary de saklanabilir. Şimdilik JSON daha iyi.
-	jsonPayload, _ := json.Marshal(map[string]string{"raw_proto_base64": proto.EncodeVarint(uint64(len(rawPayload)))}) // Placeholder
+	// DÜZELTME: Ham binary payload'ı base64'e çevirerek güvenli bir şekilde JSON içinde saklıyoruz.
+	jsonPayload, _ := json.Marshal(map[string]string{
+		"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload),
+	})
 
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	_, err := h.db.Exec(query, event.TraceId, event.EventType, eventTimestamp, jsonPayload) // CallID yerine TraceID
+	// CallID yerine TraceID kullanmak olay takibi için daha doğrudur.
+	_, err := h.db.Exec(query, event.TraceId, event.EventType, eventTimestamp, jsonPayload)
 	if err != nil {
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
@@ -150,7 +152,7 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, event *eventv1.UserIdentifiedForCallEvent) {
 	if event.User == nil || event.Contact == nil {
-		l.Warn().Msg("user.identified.for_call olayı eksik User veya Contact bilgisi içeriyor.")
+		l.Warn().Msg("user.identified.for.call olayı eksik User veya Contact bilgisi içeriyor.")
 		return
 	}
 	l = l.With().Str("call_id", event.CallId).Str("user_id", event.User.Id).Int32("contact_id", event.Contact.Id).Logger()
