@@ -69,9 +69,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 }
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
-	// DÜZELTME: Payload'ı base64'e çevirip JSON objesi içine koyuyoruz.
-	// Bu, veritabanına gönderirken `string` olarak değil, `json.RawMessage` veya `[]byte` olarak
-	// ele alınmasını sağlar ve `pgx` driver'ının doğru tip dönüşümünü yapmasına olanak tanır.
+	// Payload'ı base64'e çevirip JSON objesi içine koyuyoruz.
 	payloadMap := map[string]string{
 		"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload),
 	}
@@ -81,8 +79,10 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, t
 		return err
 	}
 
+	// [FIX] jsonPayload []byte tipindedir. PostgreSQL driver'ı bunu bytea (binary) sanıp hata verebilir (22P02).
+	// Bunu string'e cast ederek JSONB sütununa uygun hale getiriyoruz.
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	_, err = h.db.Exec(query, callID, eventType, ts, jsonPayload) // Doğrudan []byte gönderiliyor
+	_, err = h.db.Exec(query, callID, eventType, ts, string(jsonPayload)) 
 	if err != nil {
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
