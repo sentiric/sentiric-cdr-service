@@ -31,6 +31,7 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 }
 
 func (h *EventHandler) HandleEvent(body []byte) {
+	// 1. CallStartedEvent
 	var callStarted eventv1.CallStartedEvent
 	if err := proto.Unmarshal(body, &callStarted); err == nil && callStarted.EventType == "call.started" {
 		l := h.log.With().Str("call_id", callStarted.CallId).Str("event_type", callStarted.EventType).Logger()
@@ -42,6 +43,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		return
 	}
 
+	// 2. CallEndedEvent
 	var callEnded eventv1.CallEndedEvent
 	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
 		l := h.log.With().Str("call_id", callEnded.CallId).Str("event_type", callEnded.EventType).Logger()
@@ -53,6 +55,7 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		return
 	}
 
+	// 3. UserIdentifiedForCallEvent
 	var userIdentified eventv1.UserIdentifiedForCallEvent
 	if err := proto.Unmarshal(body, &userIdentified); err == nil && userIdentified.EventType == "user.identified.for.call" {
 		l := h.log.With().Str("call_id", userIdentified.CallId).Str("event_type", userIdentified.EventType).Logger()
@@ -64,7 +67,32 @@ func (h *EventHandler) HandleEvent(body []byte) {
 		return
 	}
 
-	h.log.Error().Bytes("raw_message", body).Msg("Hata: Mesaj bilinen bir Protobuf formatında değil veya 'eventType' alanı eksik/yanlış.")
+	// 4. [FIX] GenericEvent (call.media.playback.finished vb.)
+	var genericEvent eventv1.GenericEvent
+	if err := proto.Unmarshal(body, &genericEvent); err == nil && genericEvent.EventType != "" {
+		l := h.log.With().Str("trace_id", genericEvent.TraceId).Str("event_type", genericEvent.EventType).Logger()
+		h.eventsProcessed.WithLabelValues(genericEvent.EventType).Inc()
+
+		// GenericEvent içinde CallID doğrudan bir alan olarak yok, payload_json içinde olabilir veya TraceID CallID olarak kullanılmıştır.
+		// Loglama için TraceID'yi CallID gibi kullanabiliriz veya boş geçebiliriz.
+		callID := genericEvent.TraceId
+
+		l.Debug().Msgf("Protobuf GenericEvent (%s) alındı.", genericEvent.EventType)
+
+		// Veritabanına kaydet
+		// GenericEvent payload'ı zaten JSON string'dir, doğrudan kullanabiliriz.
+		query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
+		_, dbErr := h.db.Exec(query, callID, genericEvent.EventType, genericEvent.Timestamp.AsTime(), genericEvent.PayloadJson)
+
+		if dbErr != nil {
+			l.Error().Err(dbErr).Msg("GenericEvent veritabanına yazılamadı.")
+			h.eventsFailed.WithLabelValues(genericEvent.EventType, "db_insert_failed").Inc()
+		}
+		return
+	}
+
+	// 5. Bilinmeyen Format
+	h.log.Warn().Bytes("raw_message", body).Msg("Hata: Mesaj bilinen bir Protobuf formatında değil veya 'eventType' alanı eksik/yanlış.")
 	h.eventsFailed.WithLabelValues("unknown", "proto_unmarshal_unknown_type").Inc()
 }
 
@@ -79,10 +107,8 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, t
 		return err
 	}
 
-	// [FIX] jsonPayload []byte tipindedir. PostgreSQL driver'ı bunu bytea (binary) sanıp hata verebilir (22P02).
-	// Bunu string'e cast ederek JSONB sütununa uygun hale getiriyoruz.
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4)`
-	_, err = h.db.Exec(query, callID, eventType, ts, string(jsonPayload)) 
+	_, err = h.db.Exec(query, callID, eventType, ts, string(jsonPayload))
 	if err != nil {
 		l.Error().Err(err).Msg("Ham CDR olayı veritabanına yazılamadı.")
 		return err
