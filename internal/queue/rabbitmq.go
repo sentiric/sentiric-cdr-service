@@ -21,7 +21,7 @@ const (
 func Connect(ctx context.Context, url string, log zerolog.Logger) (*amqp091.Channel, <-chan *amqp091.Error, error) {
 	var conn *amqp091.Connection
 	var err error
-	
+
 	// Retry backoff policy
 	backoff := 1 * time.Second
 	maxBackoff := 30 * time.Second
@@ -37,16 +37,16 @@ func Connect(ctx context.Context, url string, log zerolog.Logger) (*amqp091.Chan
 		conn, err = amqp091.Dial(url)
 		if err == nil {
 			log.Info().Msg("RabbitMQ bağlantısı başarılı.")
-			
+
 			ch, chErr := conn.Channel()
 			if chErr != nil {
 				conn.Close() // Kanal açılmazsa bağlantıyı da kapat
 				return nil, nil, fmt.Errorf("RabbitMQ kanalı oluşturulamadı: %w", chErr)
 			}
-			
+
 			closeChan := make(chan *amqp091.Error)
 			conn.NotifyClose(closeChan)
-			
+
 			return ch, closeChan, nil
 		}
 
@@ -67,8 +67,18 @@ func Connect(ctx context.Context, url string, log zerolog.Logger) (*amqp091.Chan
 	}
 }
 
+// HandlerResult, işlem sonucunu belirler
+type HandlerResult int
+
+const (
+	Ack HandlerResult = iota
+	NackRequeue
+	NackDiscard
+)
+
 // StartConsumer, kuyruğu dinler ve mesajları worker pool mantığıyla işler.
-func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]byte), log zerolog.Logger, wg *sync.WaitGroup) {
+// DÜZELTME: handlerFunc artık hata durumunu bildirebilmek için HandlerResult dönüyor.
+func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]byte) HandlerResult, log zerolog.Logger, wg *sync.WaitGroup) {
 	// 1. Exchange Tanımla
 	err := ch.ExchangeDeclare(
 		exchangeName,
@@ -113,7 +123,6 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 	log.Info().Str("queue", q.Name).Str("exchange", exchangeName).Msg("Kalıcı kuyruk başarıyla exchange'e bağlandı.")
 
 	// 4. QoS Ayarı (Worker sayısı kadar prefetch)
-	// Global false: Her consumer instance için ayrı limit
 	err = ch.Qos(maxConcurrentWorkers, 0, false)
 	if err != nil {
 		log.Error().Err(err).Msg("QoS ayarı yapılamadı.")
@@ -140,7 +149,7 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 		Int("workers", maxConcurrentWorkers).
 		Msg("Tüketici başlatıldı, mesajlar bekleniyor...")
 
-	// Semaphore pattern: maxConcurrentWorkers kadar eşzamanlı işlem
+	// Semaphore pattern
 	sem := make(chan struct{}, maxConcurrentWorkers)
 
 	for {
@@ -148,35 +157,50 @@ func StartConsumer(ctx context.Context, ch *amqp091.Channel, handlerFunc func([]
 		case <-ctx.Done():
 			log.Info().Msg("Context iptal edildi, yeni mesaj alımı durduruluyor.")
 			return
-			
+
 		case d, ok := <-msgs:
 			if !ok {
 				log.Info().Msg("RabbitMQ mesaj kanalı kapandı.")
 				return
 			}
 
-			// Worker slotu al (Bloklar eğer doluysa)
+			// Worker slotu al
 			sem <- struct{}{}
 			wg.Add(1)
 
 			go func(msg amqp091.Delivery) {
 				defer wg.Done()
-				defer func() { <-sem }() // İş bitince slotu bırak
+				defer func() { <-sem }()
 
-				// Panic Recovery: Eğer handler panic olursa kuyruğu kilitlemesin
+				// Panic Recovery: Handler panic olursa mesajı requeue et (Data Loss Önleme)
 				defer func() {
 					if r := recover(); r != nil {
-						log.Error().Interface("panic", r).Msg("CRITICAL: Message handler panikledi! Mesaj Nack ediliyor.")
-						// Tekrar kuyruğa atma (requeue=false), Dead Letter Exchange'e gitmeli
-						_ = msg.Nack(false, false) 
+						log.Error().Interface("panic", r).Msg("CRITICAL: Message handler panikledi! Mesaj REQUEUE ediliyor.")
+						// requeue=true (Tekrar dene)
+						_ = msg.Nack(false, true)
 					}
 				}()
 
-				handlerFunc(msg.Body)
-				
-				// Başarılı işleme sonrası Ack
-				if err := msg.Ack(false); err != nil {
-					log.Error().Err(err).Msg("Mesaj Ack edilemedi")
+				// Handler'ı çağır ve sonuca göre işlem yap
+				result := handlerFunc(msg.Body)
+
+				switch result {
+				case Ack:
+					if err := msg.Ack(false); err != nil {
+						log.Error().Err(err).Msg("Mesaj Ack edilemedi")
+					}
+				case NackRequeue:
+					log.Warn().Msg("Geçici hata algılandı, mesaj kuyruğa geri gönderiliyor (Nack Requeue).")
+					// requeue=true
+					if err := msg.Nack(false, true); err != nil {
+						log.Error().Err(err).Msg("Mesaj Nack edilemedi")
+					}
+				case NackDiscard:
+					log.Error().Msg("Kalıcı hata veya geçersiz format, mesaj atılıyor (Nack Discard).")
+					// requeue=false
+					if err := msg.Nack(false, false); err != nil {
+						log.Error().Err(err).Msg("Mesaj Nack edilemedi")
+					}
 				}
 			}(d)
 		}
