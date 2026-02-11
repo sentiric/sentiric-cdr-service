@@ -4,42 +4,69 @@ package logger
 import (
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 )
 
 var (
-	// PII Maskeleme için Regex'ler
-	phoneRegex = regexp.MustCompile(`(\+?90|0)?5[0-9]{9}`)
+	// Türkiye telefon formatı regex
+	phoneRegex = regexp.MustCompile(`(90|0)?5[0-9]{9}`)
 )
 
-type PiiFilter struct{}
+// PIIHook, hassas verileri otomatik maskeler
+type PIIHook struct{}
 
-func (f PiiFilter) Run(e *zerolog.Event, level zerolog.Level, msg string) {
+func (h PIIHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
+	if msg == "" {
+		return
+	}
+
 	// Mesaj içinde telefon numarası varsa maskele
 	if phoneRegex.MatchString(msg) {
-		masked := phoneRegex.ReplaceAllString(msg, "905XXXXXXXXX")
+		masked := phoneRegex.ReplaceAllStringFunc(msg, func(phone string) string {
+			if len(phone) < 7 {
+				return "****"
+			}
+			// Örn: 905548777858 -> 90554***58
+			return phone[:5] + "***" + phone[len(phone)-2:]
+		})
 		e.Str("masked_msg", masked)
 	}
 }
 
+// New, Sentiric standartlarına uygun konfigüre edilmiş bir logger döner
 func New(serviceName, env, logLevel string) zerolog.Logger {
-	level, _ := zerolog.ParseLevel(logLevel)
-	zerolog.TimeFieldFormat = time.RFC3339
-
-	var output zerolog.ConsoleWriter
-	if env == "development" {
-		output = zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}
+	level, err := zerolog.ParseLevel(strings.ToLower(logLevel))
+	if err != nil {
+		level = zerolog.InfoLevel
 	}
+
+	zerolog.TimeFieldFormat = time.RFC3339
+	zerolog.MessageFieldName = "msg"
 
 	var logger zerolog.Logger
 	if env == "development" {
-		logger = zerolog.New(output).With().Timestamp().Str("service", serviceName).Logger()
+		output := zerolog.ConsoleWriter{
+			Out:        os.Stderr,
+			TimeFormat: "15:04:05",
+			NoColor:    false,
+		}
+		logger = zerolog.New(output).With().Timestamp().Str("svc", serviceName).Logger()
 	} else {
-		logger = zerolog.New(os.Stderr).With().Timestamp().Str("service", serviceName).Logger()
+		// Üretim ortamında saf JSON
+		logger = zerolog.New(os.Stderr).With().Timestamp().Str("svc", serviceName).Logger()
 	}
 
-	// PII Filtresini Uygula
-	return logger.Level(level).Hook(PiiFilter{})
+	// PII Maskeleme ve Global Hookları ekle
+	return logger.Level(level).Hook(PIIHook{})
+}
+
+// Mask, manuel maskeleme gerektiren durumlar için yardımcı fonksiyon
+func Mask(input string) string {
+	if len(input) < 7 {
+		return "****"
+	}
+	return input[:5] + "***" + input[len(input)-2:]
 }
