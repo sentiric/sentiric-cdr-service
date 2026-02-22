@@ -13,7 +13,6 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/rs/zerolog"
 
-	// SİLİNDİ: "github.com/sentiric/sentiric-cdr-service/internal/client"
 	"github.com/sentiric/sentiric-cdr-service/internal/config"
 	"github.com/sentiric/sentiric-cdr-service/internal/database"
 	"github.com/sentiric/sentiric-cdr-service/internal/handler"
@@ -36,14 +35,22 @@ func main() {
 		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
 	}
 
-	appLog := logger.New(serviceName, cfg.Env, cfg.LogLevel)
+	// Logger Init (SUTS v4.0)
+	appLog := logger.New(
+		serviceName,
+		cfg.ServiceVersion,
+		cfg.Env,
+		cfg.NodeHostname,
+		cfg.LogLevel,
+		cfg.LogFormat,
+	)
 
 	appLog.Info().
-		Str("version", ServiceVersion).
-		Str("commit", GitCommit).
-		Str("build_date", BuildDate).
-		Str("profile", cfg.Env).
-		Msg("🚀 cdr-service başlatılıyor...")
+		Str("event", logger.EventSystemStartup).
+		Dict("attributes", zerolog.Dict().
+			Str("commit", GitCommit).
+			Str("build_date", BuildDate)).
+		Msg("🚀 cdr-service başlatılıyor (SUTS v4.0)...")
 
 	go metrics.StartServer(cfg.MetricsPort, appLog)
 
@@ -61,7 +68,6 @@ func main() {
 		defer db.Close()
 		defer rabbitCh.Close()
 
-		// Artık userClient bağımlılığı yok
 		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 		var consumerWg sync.WaitGroup
@@ -76,7 +82,7 @@ func main() {
 			cancel()
 		}
 
-		appLog.Info().Msg("RabbitMQ tüketicisinin bitmesi bekleniyor...")
+		appLog.Info().Str("event", logger.EventShutdown).Msg("RabbitMQ tüketicisinin bitmesi bekleniyor...")
 		consumerWg.Wait()
 	}()
 
@@ -84,7 +90,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	appLog.Info().Msg("Kapatma sinyali alındı, servis durduruluyor...")
+	appLog.Warn().Str("event", logger.EventShutdown).Msg("Kapatma sinyali alındı...")
 	cancel()
 
 	wg.Wait()
@@ -104,7 +110,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 		var err error
 		db, err = database.Connect(ctx, cfg.PostgresURL, appLog)
 		if err != nil && ctx.Err() == nil {
-			appLog.Error().Err(err).Msg("Veritabanı bağlantı denemeleri başarısız oldu, servis sonlandırılıyor.")
+			appLog.Error().Err(err).Msg("Veritabanı bağlantı denemeleri başarısız oldu.")
 		}
 	}()
 
@@ -113,15 +119,14 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 		var err error
 		rabbitCh, closeChan, err = queue.Connect(ctx, cfg.RabbitMQURL, appLog)
 		if err != nil && ctx.Err() == nil {
-			appLog.Error().Err(err).Msg("RabbitMQ bağlantı denemeleri başarısız oldu, servis sonlandırılıyor.")
+			appLog.Error().Err(err).Msg("RabbitMQ bağlantı denemeleri başarısız oldu.")
 		}
 	}()
 
 	infraWg.Wait()
 	if ctx.Err() != nil {
-		appLog.Info().Msg("Altyapı kurulumu, servis kapatıldığı için iptal edildi.")
 		return
 	}
-	appLog.Info().Msg("Tüm altyapı bağlantıları başarıyla kuruldu.")
+	appLog.Info().Str("event", logger.EventInfraReady).Msg("Tüm altyapı bağlantıları başarıyla kuruldu.")
 	return
 }

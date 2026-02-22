@@ -1,23 +1,35 @@
-// DOSYA: sentiric-cdr-service/internal/config/config.go
+// sentiric-cdr-service/internal/config/config.go
 package config
 
 import (
 	"fmt"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Env         string
-	LogLevel    string
-	PostgresURL string
-	RabbitMQURL string
-	MetricsPort string
+	Env            string
+	LogLevel       string
+	LogFormat      string // YENİ
+	NodeHostname   string // YENİ
+	ServiceVersion string // YENİ
+	PostgresURL    string
+	RabbitMQURL    string
+	MetricsPort    string
 }
 
 func Load() (*Config, error) {
+	// Hata olsa da devam et (Env varlar esas alınır)
+	_ = godotenv.Load()
+
 	cfg := &Config{
-		Env:         getEnvWithDefault("ENV", "production"),
-		LogLevel:    getEnvWithDefault("LOG_LEVEL", "info"),
+		Env:            getEnvWithDefault("ENV", "production"),
+		LogLevel:       getEnvWithDefault("LOG_LEVEL", "info"),
+		LogFormat:      getEnvWithDefault("LOG_FORMAT", "json"),
+		NodeHostname:   getEnvWithDefault("NODE_HOSTNAME", "localhost"),
+		ServiceVersion: getEnvWithDefault("SERVICE_VERSION", "1.0.0"),
+
 		PostgresURL: getEnv("POSTGRES_URL"),
 		RabbitMQURL: getEnv("RABBITMQ_URL"),
 		MetricsPort: getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
