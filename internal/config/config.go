@@ -11,16 +11,15 @@ import (
 type Config struct {
 	Env            string
 	LogLevel       string
-	LogFormat      string // YENİ
-	NodeHostname   string // YENİ
-	ServiceVersion string // YENİ
+	LogFormat      string
+	NodeHostname   string
+	ServiceVersion string
 	PostgresURL    string
 	RabbitMQURL    string
 	MetricsPort    string
 }
 
 func Load() (*Config, error) {
-	// Hata olsa da devam et (Env varlar esas alınır)
 	_ = godotenv.Load()
 
 	cfg := &Config{
@@ -29,10 +28,9 @@ func Load() (*Config, error) {
 		LogFormat:      getEnvWithDefault("LOG_FORMAT", "json"),
 		NodeHostname:   getEnvWithDefault("NODE_HOSTNAME", "localhost"),
 		ServiceVersion: getEnvWithDefault("SERVICE_VERSION", "1.0.0"),
-
-		PostgresURL: getEnv("POSTGRES_URL"),
-		RabbitMQURL: getEnv("RABBITMQ_URL"),
-		MetricsPort: getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
+		PostgresURL:    getEnv("POSTGRES_URL"),
+		RabbitMQURL:    getEnv("RABBITMQ_URL"),
+		MetricsPort:    getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),
 	}
 
 	if cfg.PostgresURL == "" || cfg.RabbitMQURL == "" {

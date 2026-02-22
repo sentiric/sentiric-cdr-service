@@ -35,7 +35,6 @@ func main() {
 		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
 	}
 
-	// Logger Init (SUTS v4.0)
 	appLog := logger.New(
 		serviceName,
 		cfg.ServiceVersion,
@@ -65,8 +64,12 @@ func main() {
 		if ctx.Err() != nil {
 			return
 		}
-		defer db.Close()
-		defer rabbitCh.Close()
+		if db != nil {
+			defer db.Close()
+		}
+		if rabbitCh != nil {
+			defer rabbitCh.Close()
+		}
 
 		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
@@ -125,6 +128,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 
 	infraWg.Wait()
 	if ctx.Err() != nil {
+		appLog.Info().Msg("Altyapı kurulumu, servis kapatıldığı için iptal edildi.")
 		return
 	}
 	appLog.Info().Str("event", logger.EventInfraReady).Msg("Tüm altyapı bağlantıları başarıyla kuruldu.")
