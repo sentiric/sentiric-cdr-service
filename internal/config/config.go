@@ -19,15 +19,20 @@ type Config struct {
 	MetricsPort    string
 }
 
-func Load() (*Config, error) {
+func Load(version string) (*Config, error) {
 	_ = godotenv.Load()
+
+	// ServiceVersion artık build-time'dan geliyor, eğer boşsa default kullanılıyor.
+	if version == "" {
+		version = "0.0.0-dev"
+	}
 
 	cfg := &Config{
 		Env:            getEnvWithDefault("ENV", "production"),
 		LogLevel:       getEnvWithDefault("LOG_LEVEL", "info"),
 		LogFormat:      getEnvWithDefault("LOG_FORMAT", "json"),
 		NodeHostname:   getEnvWithDefault("NODE_HOSTNAME", "localhost"),
-		ServiceVersion: getEnvWithDefault("SERVICE_VERSION", "1.0.0"),
+		ServiceVersion: version,
 		PostgresURL:    getEnv("POSTGRES_URL"),
 		RabbitMQURL:    getEnv("RABBITMQ_URL"),
 		MetricsPort:    getEnvWithDefault("CDR_SERVICE_METRICS_PORT", "12052"),

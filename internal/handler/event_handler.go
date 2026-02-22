@@ -32,27 +32,26 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 	}
 }
 
-// HandleEvent: SUTS v4.0 Uyumlu
 func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 1. CallStartedEvent
 	var callStarted eventv1.CallStartedEvent
 	if err := proto.Unmarshal(body, &callStarted); err == nil && callStarted.EventType == "call.started" {
-		// [SUTS FIX]: Trace ID Promotion & Tenant Context
 		tenantID := "unknown"
 		if callStarted.DialplanResolution != nil {
 			tenantID = callStarted.DialplanResolution.TenantId
 		}
 
+		// SUTS Zenginleştirilmiş Logger: Her loga trace_id ve tenant_id otomatik eklenir.
 		l := h.log.With().
-			Str("trace_id", callStarted.CallId). // CallID is the true trace ID
+			Str("trace_id", callStarted.CallId). // Anayasal Kural: SIP Call ID = Trace ID
 			Str("tenant_id", tenantID).
 			Logger()
 
 		h.eventsProcessed.WithLabelValues(callStarted.EventType).Inc()
 		l.Info().
 			Str("event", logger.EventMessageReceived).
-			Str("message_type", callStarted.EventType).
 			Dict("attributes", zerolog.Dict().
+				Str("event.type", callStarted.EventType).
 				Str("sip.from", callStarted.FromUri).
 				Str("sip.to", callStarted.ToUri)).
 			Msg("Call Started olayı alındı")
@@ -60,7 +59,6 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		if err := h.logRawEvent(l, callStarted.CallId, callStarted.EventType, callStarted.Timestamp.AsTime(), body); err != nil {
 			return queue.NackRequeue
 		}
-
 		if err := h.handleCallStarted(l, &callStarted); err != nil {
 			return queue.NackRequeue
 		}
@@ -70,23 +68,22 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 2. CallEndedEvent
 	var callEnded eventv1.CallEndedEvent
 	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
+		// YENİ: Trace ID ve Tenant ID (varsa) ile log'u zenginleştir
 		l := h.log.With().
 			Str("trace_id", callEnded.CallId).
-			Str("tenant_id", "sentiric_demo"). // Default/Fallback
 			Logger()
 
 		h.eventsProcessed.WithLabelValues(callEnded.EventType).Inc()
 		l.Info().
 			Str("event", logger.EventMessageReceived).
-			Str("message_type", callEnded.EventType).
 			Dict("attributes", zerolog.Dict().
-				Str("reason", callEnded.Reason)).
+				Str("event.type", callEnded.EventType).
+				Str("sip.reason", callEnded.Reason)).
 			Msg("Call Ended olayı alındı")
 
 		if err := h.logRawEvent(l, callEnded.CallId, callEnded.EventType, callEnded.Timestamp.AsTime(), body); err != nil {
 			return queue.NackRequeue
 		}
-
 		if err := h.handleCallEnded(l, &callEnded); err != nil {
 			return queue.NackRequeue
 		}
@@ -109,13 +106,13 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		h.eventsProcessed.WithLabelValues(userIdentified.EventType).Inc()
 		l.Info().
 			Str("event", logger.EventMessageReceived).
-			Str("message_type", userIdentified.EventType).
+			Dict("attributes", zerolog.Dict().
+				Str("event.type", userIdentified.EventType)).
 			Msg("User Identified olayı alındı")
 
 		if err := h.logRawEvent(l, userIdentified.CallId, userIdentified.EventType, userIdentified.Timestamp.AsTime(), body); err != nil {
 			return queue.NackRequeue
 		}
-
 		if err := h.handleUserIdentified(l, &userIdentified); err != nil {
 			return queue.NackRequeue
 		}
@@ -139,6 +136,8 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 			l.Error().
 				Str("event", logger.EventDbWriteFail).
 				Err(dbErr).
+				Dict("attributes", zerolog.Dict().
+					Str("event.type", genericEvent.EventType)).
 				Msg("GenericEvent veritabanına yazılamadı.")
 			h.eventsFailed.WithLabelValues(genericEvent.EventType, "db_insert_failed").Inc()
 			return queue.NackRequeue
@@ -151,18 +150,15 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 5. Bilinmeyen Format
 	h.log.Warn().
 		Str("event", logger.EventCdrIgnored).
-		Int("body_size", len(body)).
+		Dict("attributes", zerolog.Dict().Int("body.size", len(body))).
 		Msg("Bilinmeyen veya desteklenmeyen mesaj formatı")
 
 	h.eventsFailed.WithLabelValues("unknown", "proto_unmarshal_unknown_type").Inc()
 	return queue.NackDiscard
 }
 
-// LogRawEvent ve diğer handle metodları, yukarıda oluşturulan "l" (contextual logger) nesnesini kullanır.
 func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
-	payloadMap := map[string]string{
-		"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload),
-	}
+	payloadMap := map[string]string{"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload)}
 	jsonPayload, err := json.Marshal(payloadMap)
 	if err != nil {
 		l.Error().Err(err).Msg("Raw payload JSON'a çevrilemedi.")
@@ -181,12 +177,8 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, t
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallStartedEvent) error {
 	query := `
-		INSERT INTO calls (call_id, start_time, status)
-		VALUES ($1, $2, 'STARTED')
-		ON CONFLICT (call_id) DO UPDATE SET
-			start_time = COALESCE(calls.start_time, EXCLUDED.start_time),
-			updated_at = NOW()
-	`
+		INSERT INTO calls (call_id, start_time, status) VALUES ($1, $2, 'STARTED')
+		ON CONFLICT (call_id) DO UPDATE SET start_time = COALESCE(calls.start_time, EXCLUDED.start_time), updated_at = NOW()`
 	_, err := h.db.Exec(query, event.CallId, event.Timestamp.AsTime())
 	if err != nil {
 		l.Error().Str("event", logger.EventDbWriteFail).Err(err).Msg("Call Started DB'ye yazılamadı.")
@@ -204,7 +196,6 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
 		return err
 	}
-
 	var duration int
 	endTime := event.Timestamp.AsTime()
 	if answerTime.Valid {
@@ -215,12 +206,10 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 	if duration < 0 {
 		duration = 0
 	}
-
 	disposition := "NO_ANSWER"
 	if answerTime.Valid {
 		disposition = "ANSWERED"
 	}
-
 	query := `UPDATE calls SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW() WHERE call_id = $4`
 	_, err = h.db.Exec(query, endTime, duration, disposition, event.CallId)
 	if err != nil {
@@ -228,28 +217,18 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_update_failed").Inc()
 		return err
 	}
-
 	l.Info().
 		Str("event", logger.EventCdrProcessed).
-		Dict("attributes", zerolog.Dict().
-			Int("duration_sec", duration).
-			Str("disposition", disposition)).
+		Dict("attributes", zerolog.Dict().Int("duration_sec", duration).Str("disposition", disposition)).
 		Msg("Çağrı tamamlandı ve CDR güncellendi.")
 	return nil
 }
 
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, event *eventv1.UserIdentifiedForCallEvent) error {
-	// Bu metod artık yukarıdan gelen context'i kullanır, tekrar context oluşturmasına gerek yoktur.
 	query := `
-		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status)
-		VALUES ($1, $2, $3, $4, 'IDENTIFIED')
-		ON CONFLICT (call_id) DO UPDATE SET
-			user_id = EXCLUDED.user_id,
-			contact_id = EXCLUDED.contact_id,
-			tenant_id = EXCLUDED.tenant_id,
-			status = COALESCE(calls.status, 'IDENTIFIED'),
-			updated_at = NOW()
-	`
+		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status) VALUES ($1, $2, $3, $4, 'IDENTIFIED')
+		ON CONFLICT (call_id) DO UPDATE SET user_id = EXCLUDED.user_id, contact_id = EXCLUDED.contact_id, tenant_id = EXCLUDED.tenant_id,
+		status = COALESCE(calls.status, 'IDENTIFIED'), updated_at = NOW()`
 	_, err := h.db.Exec(query, event.CallId, event.User.Id, event.Contact.Id, event.User.TenantId)
 	if err != nil {
 		l.Error().Str("event", logger.EventDbWriteFail).Err(err).Msg("User Identified DB'ye yazılamadı.")

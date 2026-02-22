@@ -22,6 +22,7 @@ import (
 )
 
 var (
+	// Bu değişkenler derleme zamanında ldflags ile doldurulur.
 	ServiceVersion string
 	GitCommit      string
 	BuildDate      string
@@ -30,7 +31,8 @@ var (
 const serviceName = "cdr-service"
 
 func main() {
-	cfg, err := config.Load()
+	// GÜNCELLEME: ServiceVersion artık config'den değil, build-time'dan geliyor.
+	cfg, err := config.Load(ServiceVersion)
 	if err != nil {
 		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
 	}
@@ -44,6 +46,7 @@ func main() {
 		cfg.LogFormat,
 	)
 
+	// SUTS v4.0 UYUMLU BAŞLANGIÇ LOGU
 	appLog.Info().
 		Str("event", logger.EventSystemStartup).
 		Dict("attributes", zerolog.Dict().
