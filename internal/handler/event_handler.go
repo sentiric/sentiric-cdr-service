@@ -68,7 +68,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 2. CallEndedEvent
 	var callEnded eventv1.CallEndedEvent
 	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
-		// YENİ: Trace ID ve Tenant ID (varsa) ile log'u zenginleştir
+		// YENİ: Trace ID ile log'u zenginleştir
 		l := h.log.With().
 			Str("trace_id", callEnded.CallId).
 			Logger()

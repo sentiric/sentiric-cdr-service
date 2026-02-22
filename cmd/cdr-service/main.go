@@ -34,7 +34,8 @@ func main() {
 	// GÜNCELLEME: ServiceVersion artık config'den değil, build-time'dan geliyor.
 	cfg, err := config.Load(ServiceVersion)
 	if err != nil {
-		log.Fatalf("Konfigürasyon yüklenemedi: %v", err)
+		// Henüz logger olmadığı için standart log kullanıyoruz.
+		log.Fatalf("Kritik Hata: Konfigürasyon yüklenemedi: %v", err)
 	}
 
 	appLog := logger.New(
