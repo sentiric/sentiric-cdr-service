@@ -189,37 +189,70 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallSt
 	return nil
 }
 
+// FIX: CDR Disposition Logic Correction (Critical Path)
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEndedEvent) error {
 	var startTime, answerTime sql.NullTime
-	err := h.db.QueryRow("SELECT start_time, answer_time FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime, &answerTime)
+	var currentDisposition sql.NullString
+
+	// GÜNCELLEME: Mevcut disposition durumunu da çekiyoruz.
+	err := h.db.QueryRow("SELECT start_time, answer_time, disposition FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime, &answerTime, &currentDisposition)
 	if err != nil && err != sql.ErrNoRows {
 		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
 		return err
 	}
-	var duration int
+
 	endTime := event.Timestamp.AsTime()
+	var duration int
+
+	// Süre Hesaplama Mantığı
 	if answerTime.Valid {
 		duration = int(endTime.Sub(answerTime.Time).Seconds())
 	} else if startTime.Valid {
+		// Answer time yoksa start time'dan hesapla (Brüt süre)
 		duration = int(endTime.Sub(startTime.Time).Seconds())
 	}
+
 	if duration < 0 {
 		duration = 0
 	}
-	disposition := "NO_ANSWER"
-	if answerTime.Valid {
-		disposition = "ANSWERED"
+
+	// KRİTİK DÜZELTME: Disposition (Durum) Belirleme Mantığı
+	// Öncelik: Eğer DB'de zaten ANSWERED yazıyorsa, bunu koru.
+	finalDisposition := "NO_ANSWER"
+
+	if currentDisposition.Valid && currentDisposition.String == "ANSWERED" {
+		finalDisposition = "ANSWERED"
+	} else if answerTime.Valid {
+		finalDisposition = "ANSWERED"
+	} else if duration > 0 && event.Reason == "normal_clearing" {
+		// Inference: Eğer süre var ve normal kapanış ise, teknik olarak cevaplanmıştır.
+		// Bu, 'answer_time' eventinin kaybolduğu durumlarda CDR'ı kurtarır.
+		finalDisposition = "ANSWERED"
+		l.Warn().Msg("Call marked as ANSWERED by inference (duration > 0), explicit answer_time was missing.")
+	} else {
+		// Diğer durumlar (Failed, Busy, Cancel) için reason analizi yapılabilir.
+		// Şimdilik varsayılan NO_ANSWER kalıyor.
+		if event.Reason == "busy" || event.Reason == "user_busy" {
+			finalDisposition = "BUSY"
+		} else if event.Reason == "failure" || event.Reason == "network_failure" {
+			finalDisposition = "FAILED"
+		}
 	}
+
 	query := `UPDATE calls SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW() WHERE call_id = $4`
-	_, err = h.db.Exec(query, endTime, duration, disposition, event.CallId)
+	_, err = h.db.Exec(query, endTime, duration, finalDisposition, event.CallId)
 	if err != nil {
 		l.Error().Str("event", logger.EventDbWriteFail).Err(err).Msg("Call Ended DB'ye yazılamadı.")
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_update_failed").Inc()
 		return err
 	}
+
 	l.Info().
 		Str("event", logger.EventCdrProcessed).
-		Dict("attributes", zerolog.Dict().Int("duration_sec", duration).Str("disposition", disposition)).
+		Dict("attributes", zerolog.Dict().
+			Int("duration_sec", duration).
+			Str("disposition", finalDisposition).
+			Str("calc_method", "hybrid_inference")).
 		Msg("Çağrı tamamlandı ve CDR güncellendi.")
 	return nil
 }
