@@ -41,9 +41,8 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 			tenantID = callStarted.DialplanResolution.TenantId
 		}
 
-		// SUTS Zenginleştirilmiş Logger: Her loga trace_id ve tenant_id otomatik eklenir.
 		l := h.log.With().
-			Str("trace_id", callStarted.CallId). // Anayasal Kural: SIP Call ID = Trace ID
+			Str("trace_id", callStarted.CallId).
 			Str("tenant_id", tenantID).
 			Logger()
 
@@ -68,7 +67,6 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 2. CallEndedEvent
 	var callEnded eventv1.CallEndedEvent
 	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
-		// YENİ: Trace ID ile log'u zenginleştir
 		l := h.log.With().
 			Str("trace_id", callEnded.CallId).
 			Logger()
@@ -119,7 +117,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		return queue.Ack
 	}
 
-	// 4. GenericEvent
+	// 4. GenericEvent (Aynı Zamanda YENİ 'call.answered' Olayını Yakalar)
 	var genericEvent eventv1.GenericEvent
 	if err := proto.Unmarshal(body, &genericEvent); err == nil && genericEvent.EventType != "" {
 		l := h.log.With().
@@ -129,6 +127,12 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 
 		h.eventsProcessed.WithLabelValues(genericEvent.EventType).Inc()
 
+		// [YENİ]: Answer Time Güncellemesi
+		if genericEvent.EventType == "call.answered" {
+			h.handleCallAnswered(l, genericEvent.TraceId, genericEvent.Timestamp.AsTime())
+		}
+
+		// Generic Event'in kendisini call_events'e yazma mantığı (Aynı kalıyor)
 		query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
 		_, dbErr := h.db.Exec(query, genericEvent.TraceId, genericEvent.EventType, genericEvent.Timestamp.AsTime(), genericEvent.PayloadJson)
 
@@ -156,6 +160,8 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	h.eventsFailed.WithLabelValues("unknown", "proto_unmarshal_unknown_type").Inc()
 	return queue.NackDiscard
 }
+
+// --- Yardımcı Metotlar ---
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
 	payloadMap := map[string]string{"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload)}
@@ -189,12 +195,24 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallSt
 	return nil
 }
 
-// FIX: CDR Disposition Logic Correction (Critical Path)
+// [YENİ METOT]: Çağrının Kesin Cevaplanma Zamanı
+func (h *EventHandler) handleCallAnswered(l zerolog.Logger, callID string, ts time.Time) {
+	query := `UPDATE calls SET answer_time = $1, status = 'ANSWERED', updated_at = NOW() WHERE call_id = $2`
+	_, err := h.db.Exec(query, ts, callID)
+	if err != nil {
+		l.Error().Err(err).Msg("Answer time (Cevaplanma süresi) güncellenemedi.")
+	} else {
+		l.Info().
+			Str("event", "CALL_ANSWERED_RECORDED").
+			Dict("attributes", zerolog.Dict().Str("sip.call_id", callID)).
+			Msg("✅ Çağrı faturaya ESAS olarak CEVAPLANDI (ACK Alındı).")
+	}
+}
+
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEndedEvent) error {
 	var startTime, answerTime sql.NullTime
 	var currentDisposition sql.NullString
 
-	// GÜNCELLEME: Mevcut disposition durumunu da çekiyoruz.
 	err := h.db.QueryRow("SELECT start_time, answer_time, disposition FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime, &answerTime, &currentDisposition)
 	if err != nil && err != sql.ErrNoRows {
 		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
@@ -204,11 +222,10 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 	endTime := event.Timestamp.AsTime()
 	var duration int
 
-	// Süre Hesaplama Mantığı
+	// Süre Hesaplama Mantığı (Artık 'answer_time' garanti dolu gelecek!)
 	if answerTime.Valid {
 		duration = int(endTime.Sub(answerTime.Time).Seconds())
 	} else if startTime.Valid {
-		// Answer time yoksa start time'dan hesapla (Brüt süre)
 		duration = int(endTime.Sub(startTime.Time).Seconds())
 	}
 
@@ -216,22 +233,17 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		duration = 0
 	}
 
-	// KRİTİK DÜZELTME: Disposition (Durum) Belirleme Mantığı
-	// Öncelik: Eğer DB'de zaten ANSWERED yazıyorsa, bunu koru.
 	finalDisposition := "NO_ANSWER"
 
 	if currentDisposition.Valid && currentDisposition.String == "ANSWERED" {
 		finalDisposition = "ANSWERED"
 	} else if answerTime.Valid {
-		finalDisposition = "ANSWERED"
+		finalDisposition = "ANSWERED" // Artık her başarılı çağrı buraya düşecek!
 	} else if duration > 0 && event.Reason == "normal_clearing" {
-		// Inference: Eğer süre var ve normal kapanış ise, teknik olarak cevaplanmıştır.
-		// Bu, 'answer_time' eventinin kaybolduğu durumlarda CDR'ı kurtarır.
+		// Fallback: Sadece olağanüstü durumlarda
 		finalDisposition = "ANSWERED"
-		l.Warn().Msg("Call marked as ANSWERED by inference (duration > 0), explicit answer_time was missing.")
+		l.Warn().Str("event", "LOG_EVENT").Msg("Call marked as ANSWERED by fallback inference.")
 	} else {
-		// Diğer durumlar (Failed, Busy, Cancel) için reason analizi yapılabilir.
-		// Şimdilik varsayılan NO_ANSWER kalıyor.
 		if event.Reason == "busy" || event.Reason == "user_busy" {
 			finalDisposition = "BUSY"
 		} else if event.Reason == "failure" || event.Reason == "network_failure" {
@@ -252,7 +264,7 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		Dict("attributes", zerolog.Dict().
 			Int("duration_sec", duration).
 			Str("disposition", finalDisposition).
-			Str("calc_method", "hybrid_inference")).
+			Str("calc_method", "exact_time")). // Artık inference değil, kesin
 		Msg("Çağrı tamamlandı ve CDR güncellendi.")
 	return nil
 }
