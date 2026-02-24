@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -32,6 +33,7 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 	}
 }
 
+// HandleEvent: RabbitMQ'dan gelen ham mesajları yönlendirir
 func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	// 1. CallStartedEvent
 	var callStarted eventv1.CallStartedEvent
@@ -117,7 +119,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		return queue.Ack
 	}
 
-	// 4. GenericEvent (Aynı Zamanda YENİ 'call.answered' Olayını Yakalar)
+	// 4. GenericEvent (call.answered, playback.finished vb.)
 	var genericEvent eventv1.GenericEvent
 	if err := proto.Unmarshal(body, &genericEvent); err == nil && genericEvent.EventType != "" {
 		l := h.log.With().
@@ -127,12 +129,12 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 
 		h.eventsProcessed.WithLabelValues(genericEvent.EventType).Inc()
 
-		// [YENİ]: Answer Time Güncellemesi
+		// [KRİTİK]: Answer Time Güncellemesi (B2BUA'dan gelen ACK sinyali)
 		if genericEvent.EventType == "call.answered" {
 			h.handleCallAnswered(l, genericEvent.TraceId, genericEvent.Timestamp.AsTime())
 		}
 
-		// Generic Event'in kendisini call_events'e yazma mantığı (Aynı kalıyor)
+		// Generic Event'in kendisini de logla
 		query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
 		_, dbErr := h.db.Exec(query, genericEvent.TraceId, genericEvent.EventType, genericEvent.Timestamp.AsTime(), genericEvent.PayloadJson)
 
@@ -161,7 +163,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	return queue.NackDiscard
 }
 
-// --- Yardımcı Metotlar ---
+// --- Yardımcı İş Mantığı (Business Logic) ---
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
 	payloadMap := map[string]string{"raw_proto_base64": base64.StdEncoding.EncodeToString(rawPayload)}
@@ -182,20 +184,84 @@ func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, t
 }
 
 func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallStartedEvent) error {
+	// [ZENGİNLEŞTİRME]: Dialplan çözümlemesinden gelen zengin veriyi (User ID, Contact ID) al.
+	var userID interface{} = nil
+	var contactID interface{} = nil
+	tenantID := "unknown"
+
+	if event.DialplanResolution != nil {
+		tenantID = event.DialplanResolution.TenantId
+
+		if event.DialplanResolution.MatchedUser != nil {
+			userID = event.DialplanResolution.MatchedUser.Id
+		}
+		if event.DialplanResolution.MatchedContact != nil {
+			contactID = event.DialplanResolution.MatchedContact.Id
+		}
+	}
+
+	// [SQL]: Eksik sütunlar eklendi (user_id, contact_id, tenant_id)
 	query := `
-		INSERT INTO calls (call_id, start_time, status) VALUES ($1, $2, 'STARTED')
-		ON CONFLICT (call_id) DO UPDATE SET start_time = COALESCE(calls.start_time, EXCLUDED.start_time), updated_at = NOW()`
-	_, err := h.db.Exec(query, event.CallId, event.Timestamp.AsTime())
+		INSERT INTO calls (call_id, start_time, status, user_id, contact_id, tenant_id) 
+		VALUES ($1, $2, 'STARTED', $3, $4, $5)
+		ON CONFLICT (call_id) DO UPDATE SET 
+			start_time = COALESCE(calls.start_time, EXCLUDED.start_time),
+			user_id = COALESCE(calls.user_id, EXCLUDED.user_id),
+			contact_id = COALESCE(calls.contact_id, EXCLUDED.contact_id),
+			tenant_id = COALESCE(calls.tenant_id, EXCLUDED.tenant_id),
+			updated_at = NOW()`
+
+	_, err := h.db.Exec(query, event.CallId, event.Timestamp.AsTime(), userID, contactID, tenantID)
 	if err != nil {
 		l.Error().Str("event", logger.EventDbWriteFail).Err(err).Msg("Call Started DB'ye yazılamadı.")
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_upsert_failed").Inc()
 		return err
 	}
-	l.Info().Str("event", logger.EventCdrProcessed).Msg("Call Started işlendi (UPSERT).")
+	l.Info().Str("event", logger.EventCdrProcessed).Msg("Call Started (Zengin Veri) işlendi.")
 	return nil
 }
 
-// [YENİ METOT]: Çağrının Kesin Cevaplanma Zamanı
+// [YENİ METOT]: Fatura Hesaplama
+func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tenantID string, duration int) {
+	if duration <= 0 {
+		return
+	}
+
+	// 1. Birim Fiyatı Çek (CORE_CALL_MINUTE)
+	var costPerUnit float64
+	// cost_models tablosu yoksa veya veri yoksa hata vermemesi için varsayılan değer
+	err := h.db.QueryRowContext(ctx, "SELECT cost_per_unit FROM cost_models WHERE id = 'CORE_CALL_MINUTE'").Scan(&costPerUnit)
+	if err != nil {
+		costPerUnit = 0.005 // Varsayılan fiyat: $0.005 / dk
+		if err != sql.ErrNoRows {
+			h.log.Warn().Err(err).Msg("Fiyat modeli okunamadı, varsayılan kullanılıyor.")
+		}
+	}
+
+	// 2. Maliyeti Hesapla (Dakika bazlı, saniye hassasiyetli)
+	minutes := float64(duration) / 60.0
+	totalCost := minutes * costPerUnit
+
+	// 3. Usage Record Oluştur
+	usageQuery := `
+        INSERT INTO usage_records (tenant_id, call_id, service_name, resource_type, quantity, calculated_cost)
+        VALUES ($1, $2, 'telephony-core', 'telephony_minute', $3, $4)
+    `
+	_, err = h.db.ExecContext(ctx, usageQuery, tenantID, callID, minutes, totalCost)
+	if err != nil {
+		h.log.Error().Err(err).Msg("Usage record oluşturulamadı!")
+	} else {
+		h.log.Info().
+			Str("call_id", callID).
+			Float64("cost", totalCost).
+			Msg("💰 Fatura kaydı oluşturuldu.")
+	}
+
+	// 4. Ana Çağrı Kaydını Güncelle (Toplam Maliyet)
+	_, _ = h.db.ExecContext(ctx, "UPDATE calls SET total_cost = $1 WHERE call_id = $2", totalCost, callID)
+}
+
+// [YENİ METOT]: Kesin Cevaplama Zamanı
 func (h *EventHandler) handleCallAnswered(l zerolog.Logger, callID string, ts time.Time) {
 	query := `UPDATE calls SET answer_time = $1, status = 'ANSWERED', updated_at = NOW() WHERE call_id = $2`
 	_, err := h.db.Exec(query, ts, callID)
@@ -212,20 +278,27 @@ func (h *EventHandler) handleCallAnswered(l zerolog.Logger, callID string, ts ti
 func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEndedEvent) error {
 	var startTime, answerTime sql.NullTime
 	var currentDisposition sql.NullString
+	var tenantID string
 
-	err := h.db.QueryRow("SELECT start_time, answer_time, disposition FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime, &answerTime, &currentDisposition)
+	// Tenant ID'yi de çekiyoruz
+	err := h.db.QueryRow("SELECT start_time, answer_time, disposition, tenant_id FROM calls WHERE call_id = $1", event.CallId).
+		Scan(&startTime, &answerTime, &currentDisposition, &tenantID)
+
 	if err != nil && err != sql.ErrNoRows {
 		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
 		return err
 	}
 
 	endTime := event.Timestamp.AsTime()
-	var duration int
+	var duration int = 0
+	finalDisposition := "NO_ANSWER"
 
-	// Süre Hesaplama Mantığı (Artık 'answer_time' garanti dolu gelecek!)
+	// Süre Hesaplama
 	if answerTime.Valid {
 		duration = int(endTime.Sub(answerTime.Time).Seconds())
+		finalDisposition = "ANSWERED"
 	} else if startTime.Valid {
+		// Answer time yoksa start time'dan hesapla (Brüt süre)
 		duration = int(endTime.Sub(startTime.Time).Seconds())
 	}
 
@@ -233,22 +306,19 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		duration = 0
 	}
 
-	finalDisposition := "NO_ANSWER"
+	// Fallback Inference (Süre var ama answer_time yoksa)
+	if !answerTime.Valid && duration > 0 && event.Reason == "normal_clearing" {
+		finalDisposition = "ANSWERED"
+		l.Warn().Str("event", "LOG_EVENT").Msg("Call marked as ANSWERED by fallback inference (Missing ACK).")
+	} else if event.Reason == "busy" || event.Reason == "user_busy" {
+		finalDisposition = "BUSY"
+	} else if event.Reason == "failure" || event.Reason == "network_failure" {
+		finalDisposition = "FAILED"
+	}
 
-	if currentDisposition.Valid && currentDisposition.String == "ANSWERED" {
-		finalDisposition = "ANSWERED"
-	} else if answerTime.Valid {
-		finalDisposition = "ANSWERED" // Artık her başarılı çağrı buraya düşecek!
-	} else if duration > 0 && event.Reason == "normal_clearing" {
-		// Fallback: Sadece olağanüstü durumlarda
-		finalDisposition = "ANSWERED"
-		l.Warn().Str("event", "LOG_EVENT").Msg("Call marked as ANSWERED by fallback inference.")
-	} else {
-		if event.Reason == "busy" || event.Reason == "user_busy" {
-			finalDisposition = "BUSY"
-		} else if event.Reason == "failure" || event.Reason == "network_failure" {
-			finalDisposition = "FAILED"
-		}
+	// [YENİ]: Fatura Kes (Eğer cevaplandıysa)
+	if finalDisposition == "ANSWERED" && duration > 0 {
+		h.calculateAndRecordUsage(context.Background(), event.CallId, tenantID, duration)
 	}
 
 	query := `UPDATE calls SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW() WHERE call_id = $4`
@@ -264,7 +334,7 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 		Dict("attributes", zerolog.Dict().
 			Int("duration_sec", duration).
 			Str("disposition", finalDisposition).
-			Str("calc_method", "exact_time")). // Artık inference değil, kesin
+			Str("calc_method", "exact_time")).
 		Msg("Çağrı tamamlandı ve CDR güncellendi.")
 	return nil
 }
