@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid" // [YENİ] UUID validasyonu için
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
@@ -193,7 +194,20 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallSt
 		tenantID = event.DialplanResolution.TenantId
 
 		if event.DialplanResolution.MatchedUser != nil {
-			userID = event.DialplanResolution.MatchedUser.Id
+			rawID := event.DialplanResolution.MatchedUser.Id
+			// [DEFENSIVE FIX]: UUID Validasyonu
+			// Veritabanının çökmemesi için ID'nin geçerli bir UUID olduğunu kontrol ediyoruz.
+			// Eğer değilse (örn: eski koddan gelen "anonymous"), NULL olarak kaydediyoruz.
+			if _, err := uuid.Parse(rawID); err == nil {
+				userID = rawID
+			} else {
+				l.Warn().
+					Str("event", "INVALID_UUID_DETECTED").
+					Str("raw_id", rawID).
+					Msg("⚠️ Geçersiz User ID formatı tespit edildi. DB kaydı için NULL kullanılıyor.")
+
+				userID = nil
+			}
 		}
 		if event.DialplanResolution.MatchedContact != nil {
 			contactID = event.DialplanResolution.MatchedContact.Id
@@ -213,11 +227,21 @@ func (h *EventHandler) handleCallStarted(l zerolog.Logger, event *eventv1.CallSt
 
 	_, err := h.db.Exec(query, event.CallId, event.Timestamp.AsTime(), userID, contactID, tenantID)
 	if err != nil {
-		l.Error().Str("event", logger.EventDbWriteFail).Err(err).Msg("Call Started DB'ye yazılamadı.")
+		l.Error().
+			Str("event", logger.EventDbWriteFail).
+			Err(err).
+			Interface("user_id_val", userID). // Debug için
+			Msg("Call Started DB'ye yazılamadı.")
+
 		h.eventsFailed.WithLabelValues(event.EventType, "db_summary_upsert_failed").Inc()
 		return err
 	}
-	l.Info().Str("event", logger.EventCdrProcessed).Msg("Call Started (Zengin Veri) işlendi.")
+
+	l.Info().
+		Str("event", logger.EventCdrProcessed).
+		Str("tenant_id", tenantID).
+		Msg("Call Started (Zengin Veri) işlendi.")
+
 	return nil
 }
 
@@ -340,6 +364,9 @@ func (h *EventHandler) handleCallEnded(l zerolog.Logger, event *eventv1.CallEnde
 }
 
 func (h *EventHandler) handleUserIdentified(l zerolog.Logger, event *eventv1.UserIdentifiedForCallEvent) error {
+	// [DEFENSIVE FIX]: Burada da UUID validasyonu yapabiliriz ama genellikle Dialplan'dan gelen veri daha kritiktir.
+	// User Service'den gelen verinin UUID olduğu varsayılır.
+
 	query := `
 		INSERT INTO calls (call_id, user_id, contact_id, tenant_id, status) VALUES ($1, $2, $3, $4, 'IDENTIFIED')
 		ON CONFLICT (call_id) DO UPDATE SET user_id = EXCLUDED.user_id, contact_id = EXCLUDED.contact_id, tenant_id = EXCLUDED.tenant_id,
