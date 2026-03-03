@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -46,7 +47,18 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		return h.processCallEnded(body, &callEnded)
 	}
 
-	// 3. CallRecordingAvailable (Media Service Worker'dan gelen JSON Formatı)
+	// 3. UserIdentified
+	var userIdentified eventv1.UserIdentifiedForCallEvent
+	if err := proto.Unmarshal(body, &userIdentified); err == nil && userIdentified.EventType == "user.identified.for.call" {
+		return h.processUserIdentified(body, &userIdentified)
+	}
+
+	// 4. CallRecordingAvailable (Proto or JSON fallback)
+	var recordingEvent eventv1.CallRecordingAvailableEvent
+	if err := proto.Unmarshal(body, &recordingEvent); err == nil && recordingEvent.EventType == "call.recording.available" {
+		return h.processRecordingAvailable(recordingEvent.CallId, recordingEvent.RecordingUri)
+	}
+
 	var jsonEvent map[string]interface{}
 	if err := json.Unmarshal(body, &jsonEvent); err == nil {
 		if uri, ok := jsonEvent["uri"].(string); ok {
@@ -56,7 +68,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		}
 	}
 
-	// 4. Generic Event (Answered vs)
+	// 5. Generic Event (Answered, Playback Finished vb.)
 	var genericEvent eventv1.GenericEvent
 	if err := proto.Unmarshal(body, &genericEvent); err == nil && genericEvent.EventType != "" {
 		h.handleGenericEvent(&genericEvent)
@@ -68,6 +80,8 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 	return queue.NackDiscard
 }
 
+// --- İŞLEYİCİLER ---
+
 func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStartedEvent) queue.HandlerResult {
 	tenantID := "system"
 	if event.DialplanResolution != nil && event.DialplanResolution.TenantId != "" {
@@ -75,7 +89,6 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 	}
 
 	l := h.log.With().Str("call_id", event.CallId).Logger()
-
 	_ = h.logRawEvent(l, event.CallId, event.EventType, event.Timestamp.AsTime(), body)
 
 	var userID interface{} = nil
@@ -116,20 +129,50 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 	l := h.log.With().Str("call_id", event.CallId).Logger()
 	_ = h.logRawEvent(l, event.CallId, event.EventType, event.Timestamp.AsTime(), body)
 
-	var startTime sql.NullTime
-	_ = h.db.QueryRow("SELECT start_time FROM calls WHERE call_id = $1", event.CallId).Scan(&startTime)
+	var startTime, answerTime sql.NullTime
+	var tenantID string
 
-	duration := 0
-	if startTime.Valid {
-		duration = int(event.Timestamp.AsTime().Sub(startTime.Time).Seconds())
-		if duration < 0 {
-			duration = 0
-		}
+	err := h.db.QueryRow("SELECT start_time, answer_time, tenant_id FROM calls WHERE call_id = $1", event.CallId).
+		Scan(&startTime, &answerTime, &tenantID)
+
+	if err != nil && err != sql.ErrNoRows {
+		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
+		return queue.NackRequeue
 	}
 
-	// [KRİTİK DÜZELTME]: duration_seconds alanı eklendi
+	endTime := event.Timestamp.AsTime()
+	duration := 0
+	finalDisposition := "NO_ANSWER"
+
+	// Kesin Fatura Süresi (Answer Time varsa)
+	if answerTime.Valid {
+		duration = int(endTime.Sub(answerTime.Time).Seconds())
+		finalDisposition = "ANSWERED"
+	} else if startTime.Valid {
+		// Answer time yoksa start time'dan hesapla (Brüt süre)
+		duration = int(endTime.Sub(startTime.Time).Seconds())
+	}
+
+	if duration < 0 {
+		duration = 0
+	}
+
+	// Fallback Inference
+	if !answerTime.Valid && duration > 0 && event.Reason == "normal_clearing" {
+		finalDisposition = "ANSWERED"
+	} else if event.Reason == "busy" || event.Reason == "user_busy" {
+		finalDisposition = "BUSY"
+	} else if event.Reason == "failure" || event.Reason == "network_failure" {
+		finalDisposition = "FAILED"
+	}
+
+	// FATURA KESİMİ
+	if finalDisposition == "ANSWERED" && duration > 0 {
+		h.calculateAndRecordUsage(context.Background(), event.CallId, tenantID, duration)
+	}
+
 	query := `UPDATE calls SET end_time = $1, duration_seconds = $2, status = 'COMPLETED', disposition = $3, updated_at = NOW() WHERE call_id = $4`
-	_, err := h.db.Exec(query, event.Timestamp.AsTime(), duration, "COMPLETED", event.CallId)
+	_, err = h.db.Exec(query, endTime, duration, finalDisposition, event.CallId)
 	if err != nil {
 		l.Error().Err(err).Msg("DB Write Error (CallEnded)")
 		return queue.NackRequeue
@@ -137,6 +180,34 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
 	return queue.Ack
+}
+
+func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tenantID string, duration int) {
+	if duration <= 0 {
+		return
+	}
+
+	var costPerUnit float64
+	err := h.db.QueryRowContext(ctx, "SELECT cost_per_unit FROM cost_models WHERE id = 'CORE_CALL_MINUTE'").Scan(&costPerUnit)
+	if err != nil {
+		costPerUnit = 0.005 // Fallback fiyat
+	}
+
+	minutes := float64(duration) / 60.0
+	totalCost := minutes * costPerUnit
+
+	usageQuery := `
+        INSERT INTO usage_records (tenant_id, call_id, service_name, resource_type, quantity, calculated_cost)
+        VALUES ($1, $2, 'telephony-core', 'telephony_minute', $3, $4)
+    `
+	_, err = h.db.ExecContext(ctx, usageQuery, tenantID, callID, minutes, totalCost)
+	if err != nil {
+		h.log.Error().Err(err).Msg("Usage record oluşturulamadı!")
+	} else {
+		h.log.Info().Str("call_id", callID).Float64("cost", totalCost).Msg("💰 Fatura kaydı oluşturuldu.")
+	}
+
+	_, _ = h.db.ExecContext(ctx, "UPDATE calls SET total_cost = $1 WHERE call_id = $2", totalCost, callID)
 }
 
 func (h *EventHandler) processRecordingAvailable(callId string, uri string) queue.HandlerResult {
@@ -161,6 +232,10 @@ func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent) {
 	}
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
 	_, _ = h.db.Exec(query, event.TraceId, event.EventType, event.Timestamp.AsTime(), event.PayloadJson)
+}
+
+func (h *EventHandler) processUserIdentified(body []byte, event *eventv1.UserIdentifiedForCallEvent) queue.HandlerResult {
+	return queue.Ack
 }
 
 func (h *EventHandler) logRawEvent(l zerolog.Logger, callID, eventType string, ts time.Time, rawPayload []byte) error {
