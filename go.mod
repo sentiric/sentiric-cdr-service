@@ -3,18 +3,15 @@ module github.com/sentiric/sentiric-cdr-service
 go 1.24.5
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.5
+	github.com/joho/godotenv v1.5.1
 	github.com/prometheus/client_golang v1.23.0
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rs/zerolog v1.34.0
-	// DOĞRULANDI: v1.13.5
-	github.com/sentiric/sentiric-contracts v1.16.0
+	// GÜNCELLEME: v1.18.0 (Veri Modelleri Uyumlu)
+	github.com/sentiric/sentiric-contracts v1.18.0
 	google.golang.org/protobuf v1.36.10
-)
-
-require (
-	github.com/google/uuid v1.6.0
-	github.com/joho/godotenv v1.5.1
 )
 
 require (

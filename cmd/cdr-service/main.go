@@ -60,7 +60,6 @@ func main() {
 	go func() {
 		defer wg.Done()
 
-		// DÜZELTME: rabbitCh yerine rabbitConn dönüyor
 		db, rabbitConn, rabbitCloseChan := setupInfrastructure(ctx, cfg, appLog)
 		if ctx.Err() != nil {
 			return
@@ -72,6 +71,7 @@ func main() {
 			defer rabbitConn.Close()
 		}
 
+		// [GÜNCELLEME]: NewEventHandler artık database.DB nesnesini alıyor.
 		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 		var consumerWg sync.WaitGroup
@@ -112,6 +112,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 	go func() {
 		defer infraWg.Done()
 		var err error
+		// Veritabanı bağlantısı
 		db, err = database.Connect(ctx, cfg.PostgresURL, appLog)
 		if err != nil && ctx.Err() == nil {
 			appLog.Error().Err(err).Msg("Veritabanı bağlantı denemeleri başarısız oldu.")
@@ -121,6 +122,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 	go func() {
 		defer infraWg.Done()
 		var err error
+		// RabbitMQ bağlantısı
 		rabbitConn, closeChan, err = queue.Connect(ctx, cfg.RabbitMQURL, appLog)
 		if err != nil && ctx.Err() == nil {
 			appLog.Error().Err(err).Msg("RabbitMQ bağlantı denemeleri başarısız oldu.")
