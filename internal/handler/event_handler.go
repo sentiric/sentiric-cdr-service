@@ -253,8 +253,15 @@ func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody [
 		}
 	}
 
+	// [DÜZELTME]: Raw Protobuf byte'ları yerine, event içindeki JSON payload'u kullan.
+	// Eğer payload yoksa boş bir JSON nesnesi {} yaz, PostgreSQL kızmasın.
+	payloadBytes := []byte("{}")
+	if event.PayloadJson != "" {
+		payloadBytes = []byte(event.PayloadJson)
+	}
+
 	// Raw Event Loglama (Denetim için)
-	_ = h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), rawBody)
+	_ = h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadBytes)
 
 	return queue.Ack
 }
