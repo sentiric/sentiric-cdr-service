@@ -22,7 +22,6 @@ import (
 )
 
 var (
-	// Bu değişkenler derleme zamanında ldflags ile doldurulur.
 	ServiceVersion string
 	GitCommit      string
 	BuildDate      string
@@ -31,10 +30,8 @@ var (
 const serviceName = "cdr-service"
 
 func main() {
-	// GÜNCELLEME: ServiceVersion artık config'den değil, build-time'dan geliyor.
 	cfg, err := config.Load(ServiceVersion)
 	if err != nil {
-		// Henüz logger olmadığı için standart log kullanıyoruz.
 		log.Fatalf("Kritik Hata: Konfigürasyon yüklenemedi: %v", err)
 	}
 
@@ -47,7 +44,6 @@ func main() {
 		cfg.LogFormat,
 	)
 
-	// SUTS v4.0 UYUMLU BAŞLANGIÇ LOGU
 	appLog.Info().
 		Str("event", logger.EventSystemStartup).
 		Dict("attributes", zerolog.Dict().
@@ -64,21 +60,22 @@ func main() {
 	go func() {
 		defer wg.Done()
 
-		db, rabbitCh, rabbitCloseChan := setupInfrastructure(ctx, cfg, appLog)
+		// DÜZELTME: rabbitCh yerine rabbitConn dönüyor
+		db, rabbitConn, rabbitCloseChan := setupInfrastructure(ctx, cfg, appLog)
 		if ctx.Err() != nil {
 			return
 		}
 		if db != nil {
 			defer db.Close()
 		}
-		if rabbitCh != nil {
-			defer rabbitCh.Close()
+		if rabbitConn != nil {
+			defer rabbitConn.Close()
 		}
 
 		eventHandler := handler.NewEventHandler(db, appLog, metrics.EventsProcessed, metrics.EventsFailed)
 
 		var consumerWg sync.WaitGroup
-		go queue.StartConsumer(ctx, rabbitCh, eventHandler.HandleEvent, appLog, &consumerWg)
+		go queue.StartConsumer(ctx, rabbitConn, eventHandler.HandleEvent, appLog, &consumerWg)
 
 		select {
 		case <-ctx.Done():
@@ -106,7 +103,7 @@ func main() {
 
 func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog.Logger) (
 	db *sql.DB,
-	rabbitCh *amqp091.Channel,
+	rabbitConn *amqp091.Connection,
 	closeChan <-chan *amqp091.Error,
 ) {
 	var infraWg sync.WaitGroup
@@ -124,7 +121,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 	go func() {
 		defer infraWg.Done()
 		var err error
-		rabbitCh, closeChan, err = queue.Connect(ctx, cfg.RabbitMQURL, appLog)
+		rabbitConn, closeChan, err = queue.Connect(ctx, cfg.RabbitMQURL, appLog)
 		if err != nil && ctx.Err() == nil {
 			appLog.Error().Err(err).Msg("RabbitMQ bağlantı denemeleri başarısız oldu.")
 		}
@@ -132,7 +129,7 @@ func setupInfrastructure(ctx context.Context, cfg *config.Config, appLog zerolog
 
 	infraWg.Wait()
 	if ctx.Err() != nil {
-		appLog.Info().Msg("Altyapı kurulumu, servis kapatıldığı için iptal edildi.")
+		appLog.Info().Msg("Altyapı kurulumu iptal edildi.")
 		return
 	}
 	appLog.Info().Str("event", logger.EventInfraReady).Msg("Tüm altyapı bağlantıları başarıyla kuruldu.")
