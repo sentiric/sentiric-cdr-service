@@ -231,15 +231,24 @@ func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody [
 		}
 	}
 
-	//[KRİTİK DÜZELTME]: PostgreSQL'in jsonb sütunu string (metin) bekler,[]byte değil!
-	// Eğer payload_json boşsa güvenli bir {} atıyoruz.
+	// [FIX]: Payload'ı string'e çeviriyoruz. Eğer boşsa geçerli bir JSON objesi "{}" atıyoruz.
 	payloadStr := "{}"
-	if event.PayloadJson != "" {
+	if len(event.PayloadJson) > 0 {
+		// Protobuf string alanı zaten UTF-8 string'dir, ekstra işleme gerek yok
 		payloadStr = event.PayloadJson
+	} else {
+		// Eğer payload yoksa ama rawBody varsa onu deneyelim (Debug amaçlı)
+		// Ancak DB valid JSON istiyor.
+		payloadStr = "{}"
 	}
 
-	// String formatında gönderiyoruz (CallRepository'deki metodu da güncelleyeceğiz)
-	_ = h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
+	// Repository katmanına string olarak gidiyor
+	err := h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
+
+	if err != nil {
+		h.log.Error().Err(err).Msg("LogEvent DB'ye yazılamadı")
+		// Bu kritik bir hata değil, akışı bozmamalı (ACK veriyoruz)
+	}
 
 	return queue.Ack
 }

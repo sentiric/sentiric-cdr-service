@@ -112,17 +112,20 @@ func (r *CallRepository) CreateUsageRecord(ctx context.Context, tenantID, callID
 	return err
 }
 
-// [KRİTİK DÜZELTME]: payload parametresi[]byte yerine string olarak değiştirildi.
-func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string, ts time.Time, payload string) error {
+// [FIX]: Parametre ismini ve tipini netleştirdik
+func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string, ts time.Time, payloadJsonString string) error {
 	var exists bool
+	// Idempotency kontrolü
 	_ = r.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM call_events WHERE call_id = $1 AND event_type = $2 AND event_timestamp = $3)", callID, eventType, ts).Scan(&exists)
 	if exists {
 		return nil
 	}
 
-	// Payload JSON string olduğu için ::jsonb casting'i artık sorunsuz çalışacaktır.
+	// Postgres'e gönderirken string'i jsonb olarak cast etmesini söylüyoruz ($4::jsonb)
+	// pgx driver string gönderdiğimizde bunu text olarak iletir, postgres bunu jsonb'ye çevirir.
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
-	_, err := r.db.ExecContext(ctx, query, callID, eventType, ts, payload)
+
+	_, err := r.db.ExecContext(ctx, query, callID, eventType, ts, payloadJsonString)
 	return err
 }
 
