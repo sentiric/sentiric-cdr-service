@@ -1,3 +1,4 @@
+// sentiric-cdr-service/internal/repository/call_repository.go
 package repository
 
 import (
@@ -28,7 +29,6 @@ type CallStartData struct {
 	ContactID    interface{} // int or nil
 }
 
-// UpsertCallStart: Çağrı başlangıcını kaydeder (Idempotent).
 func (r *CallRepository) UpsertCallStart(ctx context.Context, data CallStartData) error {
 	query := `
 		INSERT INTO calls (
@@ -50,7 +50,6 @@ func (r *CallRepository) UpsertCallStart(ctx context.Context, data CallStartData
 	return err
 }
 
-// SetAnswerTime: Çağrının cevaplandığı anı kaydeder.
 func (r *CallRepository) SetAnswerTime(ctx context.Context, callID string, answerTime time.Time) error {
 	query := `
 		UPDATE calls SET 
@@ -66,12 +65,11 @@ type CallEndData struct {
 	CallID          string
 	EndTime         time.Time
 	DurationSeconds int
-	Disposition     string // ANSWERED, BUSY, FAILED
-	HangupSource    string // CALLER, CALLEE
+	Disposition     string
+	HangupSource    string
 	SipCode         int32
 }
 
-// UpdateCallEnd: Çağrı bitişini ve istatistiklerini günceller.
 func (r *CallRepository) UpdateCallEnd(ctx context.Context, data CallEndData) error {
 	query := `
 		UPDATE calls SET 
@@ -91,13 +89,11 @@ func (r *CallRepository) UpdateCallEnd(ctx context.Context, data CallEndData) er
 	return err
 }
 
-// UpdateCost: Hesaplanan maliyeti ana tabloya yazar.
 func (r *CallRepository) UpdateCost(ctx context.Context, callID string, cost float64) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE calls SET total_cost = $1 WHERE call_id = $2", cost, callID)
 	return err
 }
 
-// GetCallDates: Süre hesaplaması için başlangıç ve cevaplama zamanlarını çeker.
 func (r *CallRepository) GetCallDates(ctx context.Context, callID string) (startTime, answerTime sql.NullTime, tenantID string, err error) {
 	err = r.db.QueryRowContext(ctx, "SELECT start_time, answer_time, tenant_id FROM calls WHERE call_id = $1", callID).
 		Scan(&startTime, &answerTime, &tenantID)
@@ -116,14 +112,15 @@ func (r *CallRepository) CreateUsageRecord(ctx context.Context, tenantID, callID
 	return err
 }
 
-func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string, ts time.Time, payload []byte) error {
-	// Idempotency: Aynı event tekrar gelirse kaydetme
+// [KRİTİK DÜZELTME]: payload parametresi[]byte yerine string olarak değiştirildi.
+func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string, ts time.Time, payload string) error {
 	var exists bool
 	_ = r.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM call_events WHERE call_id = $1 AND event_type = $2 AND event_timestamp = $3)", callID, eventType, ts).Scan(&exists)
 	if exists {
 		return nil
 	}
 
+	// Payload JSON string olduğu için ::jsonb casting'i artık sorunsuz çalışacaktır.
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
 	_, err := r.db.ExecContext(ctx, query, callID, eventType, ts, payload)
 	return err

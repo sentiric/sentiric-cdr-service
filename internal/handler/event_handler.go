@@ -13,19 +13,18 @@ import (
 
 	"github.com/sentiric/sentiric-cdr-service/internal/logger"
 	"github.com/sentiric/sentiric-cdr-service/internal/queue"
-	"github.com/sentiric/sentiric-cdr-service/internal/repository" // YENİ
-	"github.com/sentiric/sentiric-cdr-service/internal/utils"      // YENİ
+	"github.com/sentiric/sentiric-cdr-service/internal/repository"
+	"github.com/sentiric/sentiric-cdr-service/internal/utils"
 	eventv1 "github.com/sentiric/sentiric-contracts/gen/go/sentiric/event/v1"
 )
 
 type EventHandler struct {
-	repo            *repository.CallRepository // SQL DB yerine Repo kullanılıyor
+	repo            *repository.CallRepository
 	log             zerolog.Logger
 	eventsProcessed *prometheus.CounterVec
 	eventsFailed    *prometheus.CounterVec
 }
 
-// NewEventHandler constructor güncellendi
 func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *prometheus.CounterVec) *EventHandler {
 	return &EventHandler{
 		repo:            repository.NewCallRepository(db, log),
@@ -36,39 +35,31 @@ func NewEventHandler(db *sql.DB, log zerolog.Logger, processed, failed *promethe
 }
 
 func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
-	// Olayları sırayla dene ve uygun olanı işle
-
-	// 1. Call Started
 	var callStarted eventv1.CallStartedEvent
 	if err := proto.Unmarshal(body, &callStarted); err == nil && callStarted.EventType == "call.started" {
 		return h.processCallStarted(body, &callStarted)
 	}
 
-	// 2. Call Ended
 	var callEnded eventv1.CallEndedEvent
 	if err := proto.Unmarshal(body, &callEnded); err == nil && callEnded.EventType == "call.ended" {
 		return h.processCallEnded(body, &callEnded)
 	}
 
-	// 3. User Identified
 	var userIdentified eventv1.UserIdentifiedForCallEvent
 	if err := proto.Unmarshal(body, &userIdentified); err == nil && userIdentified.EventType == "user.identified.for.call" {
-		return queue.Ack // Şu anki tabloda bu veri update edilebilir, şimdilik ACK.
+		return queue.Ack
 	}
 
-	// 4. Recording Available
 	var recordingEvent eventv1.CallRecordingAvailableEvent
 	if err := proto.Unmarshal(body, &recordingEvent); err == nil && recordingEvent.EventType == "call.recording.available" {
 		return h.processRecordingAvailable(recordingEvent.CallId, recordingEvent.RecordingUri)
 	}
 
-	// 5. Generic Events (Call Answered vb.)
 	var genericEvent eventv1.GenericEvent
 	if err := proto.Unmarshal(body, &genericEvent); err == nil && genericEvent.EventType != "" {
 		return h.handleGenericEvent(&genericEvent, body)
 	}
 
-	// Fallback JSON handling (Legacy systems)
 	var jsonEvent map[string]interface{}
 	if err := json.Unmarshal(body, &jsonEvent); err == nil {
 		if uri, ok := jsonEvent["uri"].(string); ok {
@@ -86,13 +77,11 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStartedEvent) queue.HandlerResult {
 	l := h.log.With().Str("call_id", event.CallId).Logger()
 
-	// Tenant ID Belirle
 	tenantID := "system"
 	if event.DialplanResolution != nil && event.DialplanResolution.TenantId != "" {
 		tenantID = event.DialplanResolution.TenantId
 	}
 
-	// Kullanıcı ve Kontak ID'lerini çözümle
 	var userID interface{} = nil
 	var contactID interface{} = nil
 	if event.DialplanResolution != nil {
@@ -106,7 +95,6 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 		}
 	}
 
-	// [YENİ]: Numara ve Yön Analizi
 	callerNum := utils.ParseSipUri(event.FromUri)
 	calleeNum := utils.ParseSipUri(event.ToUri)
 	direction := utils.DetermineDirection(callerNum, calleeNum)
@@ -127,8 +115,8 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 		return queue.NackRetry
 	}
 
-	// Audit Log
-	_ = h.repo.LogEvent(context.Background(), event.CallId, event.EventType, event.Timestamp.AsTime(), nil)
+	//[KRİTİK DÜZELTME]: payload için nil geçiyoruz, CallStarted için payload gerekmez.
+	_ = h.repo.LogEvent(context.Background(), event.CallId, event.EventType, event.Timestamp.AsTime(), "{}")
 
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
 	return queue.Ack
@@ -137,11 +125,9 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEvent) queue.HandlerResult {
 	l := h.log.With().Str("call_id", event.CallId).Logger()
 
-	// Mevcut durumu çek
 	startTime, answerTime, tenantID, err := h.repo.GetCallDates(context.Background(), event.CallId)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// Başlangıç event'i henüz gelmemiş olabilir, Retry mantıklı
 			l.Warn().Msg("Çağrı kaydı DB'de yok, CallStarted gecikmiş olabilir. Retry ediliyor.")
 			return queue.NackRetry
 		}
@@ -153,21 +139,17 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 	duration := 0
 	disposition := "NO_ANSWER"
 
-	// [YENİ]: Hassas Süre Hesabı
 	if answerTime.Valid {
 		duration = int(endTime.Sub(answerTime.Time).Seconds())
 		disposition = "ANSWERED"
 	} else if startTime.Valid {
-		// Hiç açılmadıysa çalma süresi
 		duration = int(endTime.Sub(startTime.Time).Seconds())
 	}
 	if duration < 0 {
 		duration = 0
 	}
 
-	// [YENİ]: Disposition Mantığı
 	if !answerTime.Valid && duration > 0 && event.Reason == "normal_clearing" {
-		// Bazen ANSWER sinyali kaçabilir, süre varsa ANSWERED kabul et (Fail-safe)
 		disposition = "ANSWERED"
 	} else if event.Reason == "busy" || event.Reason == "user_busy" {
 		disposition = "BUSY"
@@ -175,13 +157,11 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 		disposition = "FAILED"
 	}
 
-	// [YENİ]: Hangup Source Tahmini (Basit)
 	hangupSource := "UNKNOWN"
 	if event.Reason == "normal_clearing" {
-		hangupSource = "CALLER" // Varsayım
+		hangupSource = "CALLER"
 	}
 
-	// Fatura Kesimi
 	if disposition == "ANSWERED" && duration > 0 {
 		if err := h.calculateAndRecordUsage(context.Background(), event.CallId, tenantID, duration); err != nil {
 			return queue.NackRetry
@@ -194,7 +174,7 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 		DurationSeconds: duration,
 		Disposition:     disposition,
 		HangupSource:    hangupSource,
-		SipCode:         0, // GenericEvent içinden çıkarılabilir ileride
+		SipCode:         0,
 	}
 
 	if err := h.repo.UpdateCallEnd(context.Background(), updateData); err != nil {
@@ -219,7 +199,7 @@ func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tena
 		return nil
 	}
 
-	costPerUnit := 0.005 // Varsayılan maliyet (DB'den çekilebilir)
+	costPerUnit := 0.005
 	minutes := float64(duration) / 60.0
 	totalCost := minutes * costPerUnit
 
@@ -228,7 +208,6 @@ func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tena
 		return err
 	}
 
-	// Ana tabloyu güncelle
 	_ = h.repo.UpdateCost(ctx, callID, totalCost)
 
 	h.log.Info().Str("call_id", callID).Float64("cost", totalCost).Msg("💰 Fatura kaydı oluşturuldu.")
@@ -246,22 +225,21 @@ func (h *EventHandler) processRecordingAvailable(callId string, uri string) queu
 }
 
 func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody []byte) queue.HandlerResult {
-	// [KRİTİK]: Call Answered Yakalama
 	if event.EventType == "call.answered" {
 		if err := h.repo.SetAnswerTime(context.Background(), event.TraceId, event.Timestamp.AsTime()); err != nil {
 			return queue.NackRetry
 		}
 	}
 
-	// [DÜZELTME]: Raw Protobuf byte'ları yerine, event içindeki JSON payload'u kullan.
-	// Eğer payload yoksa boş bir JSON nesnesi {} yaz, PostgreSQL kızmasın.
-	payloadBytes := []byte("{}")
+	//[KRİTİK DÜZELTME]: PostgreSQL'in jsonb sütunu string (metin) bekler,[]byte değil!
+	// Eğer payload_json boşsa güvenli bir {} atıyoruz.
+	payloadStr := "{}"
 	if event.PayloadJson != "" {
-		payloadBytes = []byte(event.PayloadJson)
+		payloadStr = event.PayloadJson
 	}
 
-	// Raw Event Loglama (Denetim için)
-	_ = h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadBytes)
+	// String formatında gönderiyoruz (CallRepository'deki metodu da güncelleyeceğiz)
+	_ = h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
 
 	return queue.Ack
 }
