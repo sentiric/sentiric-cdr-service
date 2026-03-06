@@ -30,6 +30,8 @@ type CallStartData struct {
 }
 
 func (r *CallRepository) UpsertCallStart(ctx context.Context, data CallStartData) error {
+	// [KRİTİK DÜZELTME]: DO UPDATE kısmından 'recording_url' çıkarıldı.
+	// Artık başlangıç event'i asla kayıt URL'ini ezemez.
 	query := `
 		INSERT INTO calls (
 			call_id, tenant_id, caller_number, callee_number, direction, 
@@ -71,6 +73,8 @@ type CallEndData struct {
 }
 
 func (r *CallRepository) UpdateCallEnd(ctx context.Context, data CallEndData) error {
+	// [KRİTİK DÜZELTME]: Sadece bitişle ilgili alanlar güncelleniyor.
+	// recording_url ve total_cost BURADA GÜNCELLENMEZ.
 	query := `
 		UPDATE calls SET 
 			end_time = $1, 
@@ -112,25 +116,31 @@ func (r *CallRepository) CreateUsageRecord(ctx context.Context, tenantID, callID
 	return err
 }
 
-// [FIX]: Parametre ismini ve tipini netleştirdik
 func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string, ts time.Time, payloadJsonString string) error {
 	var exists bool
-	// Idempotency kontrolü
 	_ = r.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM call_events WHERE call_id = $1 AND event_type = $2 AND event_timestamp = $3)", callID, eventType, ts).Scan(&exists)
 	if exists {
 		return nil
 	}
 
-	// Postgres'e gönderirken string'i jsonb olarak cast etmesini söylüyoruz ($4::jsonb)
-	// pgx driver string gönderdiğimizde bunu text olarak iletir, postgres bunu jsonb'ye çevirir.
 	query := `INSERT INTO call_events (call_id, event_type, event_timestamp, payload) VALUES ($1, $2, $3, $4::jsonb)`
-
 	_, err := r.db.ExecContext(ctx, query, callID, eventType, ts, payloadJsonString)
 	return err
 }
 
 func (r *CallRepository) UpdateRecording(ctx context.Context, callID, uri string) error {
+	// [DEBUG]: RowsAffected kontrolü eklendi.
 	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2`
-	_, err := r.db.ExecContext(ctx, query, uri, callID)
-	return err
+	res, err := r.db.ExecContext(ctx, query, uri, callID)
+	if err != nil {
+		return err
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		r.log.Warn().Str("call_id", callID).Msg("⚠️ UpdateRecording: Kayıt güncellenemedi çünkü Call ID bulunamadı.")
+	} else {
+		r.log.Info().Str("call_id", callID).Msg("✅ UpdateRecording: Veritabanı güncellendi.")
+	}
+	return nil
 }
