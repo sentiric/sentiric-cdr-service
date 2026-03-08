@@ -60,8 +60,13 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		return h.handleGenericEvent(&genericEvent, body)
 	}
 
+	// [DÜZELTME]: B2BUA termination olayını JSON olarak ayrıştır ve yoksay (hata basma)
 	var jsonEvent map[string]interface{}
 	if err := json.Unmarshal(body, &jsonEvent); err == nil {
+		if reason, ok := jsonEvent["reason"].(string); ok && reason == "workflow_hangup" {
+			h.log.Debug().Msg("Workflow hangup event safely ignored by CDR.")
+			return queue.Ack
+		}
 		if uri, ok := jsonEvent["uri"].(string); ok {
 			if callId, ok := jsonEvent["callId"].(string); ok {
 				return h.processRecordingAvailable(callId, uri)
@@ -115,7 +120,6 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 		return queue.NackRetry
 	}
 
-	//[KRİTİK DÜZELTME]: payload için nil geçiyoruz, CallStarted için payload gerekmez.
 	_ = h.repo.LogEvent(context.Background(), event.CallId, event.EventType, event.Timestamp.AsTime(), "{}")
 
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
@@ -157,9 +161,13 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 		disposition = "FAILED"
 	}
 
+	// [DÜZELTME]: Hangup Source Algılaması (Sistem vs Müşteri)
 	hangupSource := "UNKNOWN"
 	if event.Reason == "normal_clearing" {
-		hangupSource = "CALLER"
+		hangupSource = "CALLER" // Arayan kapattı
+	} else if event.Reason == "system_terminated" {
+		hangupSource = "APP"     // Biz kapattık
+		disposition = "ANSWERED" // Biz kapattıysak mutlaka cevaplanmıştır
 	}
 
 	if disposition == "ANSWERED" && duration > 0 {
@@ -231,23 +239,15 @@ func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody [
 		}
 	}
 
-	// [FIX]: Payload'ı string'e çeviriyoruz. Eğer boşsa geçerli bir JSON objesi "{}" atıyoruz.
 	payloadStr := "{}"
 	if len(event.PayloadJson) > 0 {
-		// Protobuf string alanı zaten UTF-8 string'dir, ekstra işleme gerek yok
 		payloadStr = event.PayloadJson
-	} else {
-		// Eğer payload yoksa ama rawBody varsa onu deneyelim (Debug amaçlı)
-		// Ancak DB valid JSON istiyor.
-		payloadStr = "{}"
 	}
 
-	// Repository katmanına string olarak gidiyor
 	err := h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
 
 	if err != nil {
 		h.log.Error().Err(err).Msg("LogEvent DB'ye yazılamadı")
-		// Bu kritik bir hata değil, akışı bozmamalı (ACK veriyoruz)
 	}
 
 	return queue.Ack
