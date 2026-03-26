@@ -24,7 +24,7 @@ func Load(version string) (*Config, error) {
 
 	// ServiceVersion artık build-time'dan geliyor, eğer boşsa default kullanılıyor.
 	if version == "" {
-		version = "0.0.0-dev"
+		version = "1.0.1"
 	}
 
 	cfg := &Config{

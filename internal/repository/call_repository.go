@@ -1,4 +1,5 @@
-// sentiric-cdr-service/internal/repository/call_repository.go
+// File: internal/repository/call_repository.go
+// [ARCH-COMPLIANCE] SUTS v4.0 'event' zorunluluğu doğrultusunda repository loglarına tag eklendi.
 package repository
 
 import (
@@ -7,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/sentiric/sentiric-cdr-service/internal/logger"
 )
 
 type CallRepository struct {
@@ -25,13 +27,11 @@ type CallStartData struct {
 	CalleeNumber string
 	Direction    string
 	StartTime    time.Time
-	UserID       interface{} // uuid or nil
-	ContactID    interface{} // int or nil
+	UserID       interface{}
+	ContactID    interface{}
 }
 
 func (r *CallRepository) UpsertCallStart(ctx context.Context, data CallStartData) error {
-	// [KRİTİK DÜZELTME]: DO UPDATE kısmından 'recording_url' çıkarıldı.
-	// Artık başlangıç event'i asla kayıt URL'ini ezemez.
 	query := `
 		INSERT INTO calls (
 			call_id, tenant_id, caller_number, callee_number, direction, 
@@ -73,8 +73,6 @@ type CallEndData struct {
 }
 
 func (r *CallRepository) UpdateCallEnd(ctx context.Context, data CallEndData) error {
-	// [KRİTİK DÜZELTME]: Sadece bitişle ilgili alanlar güncelleniyor.
-	// recording_url ve total_cost BURADA GÜNCELLENMEZ.
 	query := `
 		UPDATE calls SET 
 			end_time = $1, 
@@ -129,7 +127,6 @@ func (r *CallRepository) LogEvent(ctx context.Context, callID, eventType string,
 }
 
 func (r *CallRepository) UpdateRecording(ctx context.Context, callID, uri string) error {
-	// [DEBUG]: RowsAffected kontrolü eklendi.
 	query := `UPDATE calls SET recording_url = $1, updated_at = NOW() WHERE call_id = $2`
 	res, err := r.db.ExecContext(ctx, query, uri, callID)
 	if err != nil {
@@ -138,9 +135,9 @@ func (r *CallRepository) UpdateRecording(ctx context.Context, callID, uri string
 
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		r.log.Warn().Str("call_id", callID).Msg("⚠️ UpdateRecording: Kayıt güncellenemedi çünkü Call ID bulunamadı.")
+		r.log.Warn().Str("call_id", callID).Str("event", logger.EventRecordingFail).Msg("⚠️ UpdateRecording: Kayıt güncellenemedi çünkü Call ID bulunamadı.")
 	} else {
-		r.log.Info().Str("call_id", callID).Msg("✅ UpdateRecording: Veritabanı güncellendi.")
+		r.log.Info().Str("call_id", callID).Str("event", logger.EventRecordingSuccess).Msg("✅ UpdateRecording: Veritabanı güncellendi.")
 	}
 	return nil
 }

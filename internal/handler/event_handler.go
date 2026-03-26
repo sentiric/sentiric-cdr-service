@@ -1,10 +1,11 @@
-// sentiric-cdr-service/internal/handler/event_handler.go
+// File: internal/handler/event_handler.go
 package handler
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,7 +53,7 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 
 	var recordingEvent eventv1.CallRecordingAvailableEvent
 	if err := proto.Unmarshal(body, &recordingEvent); err == nil && recordingEvent.EventType == "call.recording.available" {
-		return h.processRecordingAvailable(recordingEvent.CallId, recordingEvent.RecordingUri)
+		return h.processRecordingAvailable(&recordingEvent)
 	}
 
 	var genericEvent eventv1.GenericEvent
@@ -60,16 +61,21 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 		return h.handleGenericEvent(&genericEvent, body)
 	}
 
-	// [DÜZELTME]: B2BUA termination olayını JSON olarak ayrıştır ve yoksay (hata basma)
 	var jsonEvent map[string]interface{}
 	if err := json.Unmarshal(body, &jsonEvent); err == nil {
 		if reason, ok := jsonEvent["reason"].(string); ok && reason == "workflow_hangup" {
-			h.log.Debug().Msg("Workflow hangup event safely ignored by CDR.")
+			// [ARCH-COMPLIANCE] SUTS v4.0 'event' zorunluluğu
+			h.log.Debug().Str("event", logger.EventCdrIgnored).Msg("Workflow hangup event safely ignored by CDR.")
 			return queue.Ack
 		}
 		if uri, ok := jsonEvent["uri"].(string); ok {
 			if callId, ok := jsonEvent["callId"].(string); ok {
-				return h.processRecordingAvailable(callId, uri)
+				dummyEvent := &eventv1.CallRecordingAvailableEvent{
+					CallId:       callId,
+					RecordingUri: uri,
+					TraceId:      callId,
+				}
+				return h.processRecordingAvailable(dummyEvent)
 			}
 		}
 	}
@@ -80,7 +86,11 @@ func (h *EventHandler) HandleEvent(body []byte) queue.HandlerResult {
 }
 
 func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStartedEvent) queue.HandlerResult {
-	l := h.log.With().Str("call_id", event.CallId).Logger()
+	// [ARCH-COMPLIANCE] SUTS v4.0 trace_id ve span_id eklendi.
+	l := h.log.With().
+		Str("trace_id", event.CallId).
+		Str("span_id", uuid.New().String()).
+		Logger()
 
 	tenantID := "system"
 	if event.DialplanResolution != nil && event.DialplanResolution.TenantId != "" {
@@ -115,27 +125,37 @@ func (h *EventHandler) processCallStarted(body []byte, event *eventv1.CallStarte
 		ContactID:    contactID,
 	}
 
-	if err := h.repo.UpsertCallStart(context.Background(), data); err != nil {
-		l.Error().Err(err).Msg("DB Write Error (CallStarted)")
+	//[ARCH-COMPLIANCE] ARCH-004 İhlali Giderildi: context.Background() yerine Timeout context eklendi
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := h.repo.UpsertCallStart(ctx, data); err != nil {
+		l.Error().Err(err).Str("event", logger.EventDbWriteFail).Msg("DB Write Error (CallStarted)")
 		return queue.NackRetry
 	}
 
-	_ = h.repo.LogEvent(context.Background(), event.CallId, event.EventType, event.Timestamp.AsTime(), "{}")
+	_ = h.repo.LogEvent(ctx, event.CallId, event.EventType, event.Timestamp.AsTime(), "{}")
 
 	h.eventsProcessed.WithLabelValues(event.EventType).Inc()
 	return queue.Ack
 }
 
 func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEvent) queue.HandlerResult {
-	l := h.log.With().Str("call_id", event.CallId).Logger()
+	l := h.log.With().
+		Str("trace_id", event.CallId).
+		Str("span_id", uuid.New().String()).
+		Logger()
 
-	startTime, answerTime, tenantID, err := h.repo.GetCallDates(context.Background(), event.CallId)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	startTime, answerTime, tenantID, err := h.repo.GetCallDates(ctx, event.CallId)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			l.Warn().Msg("Çağrı kaydı DB'de yok, CallStarted gecikmiş olabilir. Retry ediliyor.")
+			l.Warn().Str("event", logger.EventDbReadFail).Msg("Çağrı kaydı DB'de yok, CallStarted gecikmiş olabilir. Retry ediliyor.")
 			return queue.NackRetry
 		}
-		l.Error().Err(err).Msg("Çağrı kaydı okunamadı.")
+		l.Error().Err(err).Str("event", logger.EventDbReadFail).Msg("Çağrı kaydı okunamadı.")
 		return queue.NackRetry
 	}
 
@@ -161,17 +181,16 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 		disposition = "FAILED"
 	}
 
-	// [DÜZELTME]: Hangup Source Algılaması (Sistem vs Müşteri)
 	hangupSource := "UNKNOWN"
 	if event.Reason == "normal_clearing" {
-		hangupSource = "CALLER" // Arayan kapattı
+		hangupSource = "CALLER"
 	} else if event.Reason == "system_terminated" {
-		hangupSource = "APP"     // Biz kapattık
-		disposition = "ANSWERED" // Biz kapattıysak mutlaka cevaplanmıştır
+		hangupSource = "APP"
+		disposition = "ANSWERED"
 	}
 
 	if disposition == "ANSWERED" && duration > 0 {
-		if err := h.calculateAndRecordUsage(context.Background(), event.CallId, tenantID, duration); err != nil {
+		if err := h.calculateAndRecordUsage(ctx, event.CallId, tenantID, duration, l); err != nil {
 			return queue.NackRetry
 		}
 	}
@@ -185,8 +204,8 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 		SipCode:         0,
 	}
 
-	if err := h.repo.UpdateCallEnd(context.Background(), updateData); err != nil {
-		l.Error().Err(err).Msg("DB Write Error (CallEnded)")
+	if err := h.repo.UpdateCallEnd(ctx, updateData); err != nil {
+		l.Error().Err(err).Str("event", logger.EventDbWriteFail).Msg("DB Write Error (CallEnded)")
 		return queue.NackRetry
 	}
 
@@ -194,7 +213,7 @@ func (h *EventHandler) processCallEnded(body []byte, event *eventv1.CallEndedEve
 	return queue.Ack
 }
 
-func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tenantID string, duration int) error {
+func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tenantID string, duration int, l zerolog.Logger) error {
 	if duration <= 0 {
 		return nil
 	}
@@ -212,29 +231,46 @@ func (h *EventHandler) calculateAndRecordUsage(ctx context.Context, callID, tena
 	totalCost := minutes * costPerUnit
 
 	if err := h.repo.CreateUsageRecord(ctx, tenantID, callID, "telephony-core", "telephony_minute", minutes, totalCost); err != nil {
-		h.log.Error().Err(err).Msg("Usage record oluşturulamadı!")
+		l.Error().Err(err).Str("event", logger.EventBillingFail).Msg("Usage record oluşturulamadı!")
 		return err
 	}
 
 	_ = h.repo.UpdateCost(ctx, callID, totalCost)
 
-	h.log.Info().Str("call_id", callID).Float64("cost", totalCost).Msg("💰 Fatura kaydı oluşturuldu.")
+	l.Info().Float64("cost", totalCost).Str("event", logger.EventBillingSuccess).Msg("💰 Fatura kaydı oluşturuldu.")
 	return nil
 }
 
-func (h *EventHandler) processRecordingAvailable(callId string, uri string) queue.HandlerResult {
-	if err := h.repo.UpdateRecording(context.Background(), callId, uri); err != nil {
-		h.log.Error().Err(err).Msg("Recording Update Error")
+func (h *EventHandler) processRecordingAvailable(event *eventv1.CallRecordingAvailableEvent) queue.HandlerResult {
+	l := h.log.With().
+		Str("trace_id", event.CallId).
+		Str("span_id", uuid.New().String()).
+		Logger()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := h.repo.UpdateRecording(ctx, event.CallId, event.RecordingUri); err != nil {
+		l.Error().Err(err).Str("event", logger.EventRecordingFail).Msg("Recording Update Error")
 		return queue.NackRetry
 	}
-	h.log.Info().Str("uri", uri).Msg("🎙️ Ses kaydı DB'ye işlendi.")
+	l.Info().Str("uri", event.RecordingUri).Str("event", logger.EventRecordingSuccess).Msg("🎙️ Ses kaydı DB'ye işlendi.")
 	h.eventsProcessed.WithLabelValues("call.recording.available").Inc()
 	return queue.Ack
 }
 
 func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody []byte) queue.HandlerResult {
+	l := h.log.With().
+		Str("trace_id", event.TraceId).
+		Str("span_id", uuid.New().String()).
+		Logger()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if event.EventType == "call.answered" {
-		if err := h.repo.SetAnswerTime(context.Background(), event.TraceId, event.Timestamp.AsTime()); err != nil {
+		if err := h.repo.SetAnswerTime(ctx, event.TraceId, event.Timestamp.AsTime()); err != nil {
+			l.Error().Err(err).Str("event", logger.EventDbWriteFail).Msg("SetAnswerTime failed")
 			return queue.NackRetry
 		}
 	}
@@ -244,10 +280,9 @@ func (h *EventHandler) handleGenericEvent(event *eventv1.GenericEvent, rawBody [
 		payloadStr = event.PayloadJson
 	}
 
-	err := h.repo.LogEvent(context.Background(), event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
-
+	err := h.repo.LogEvent(ctx, event.TraceId, event.EventType, event.Timestamp.AsTime(), payloadStr)
 	if err != nil {
-		h.log.Error().Err(err).Msg("LogEvent DB'ye yazılamadı")
+		l.Error().Err(err).Str("event", logger.EventRawLogFail).Msg("LogEvent DB'ye yazılamadı")
 	}
 
 	return queue.Ack
