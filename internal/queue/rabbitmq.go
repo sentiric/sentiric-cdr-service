@@ -206,7 +206,6 @@ func handleRetry(ctx context.Context, retryCh *amqp091.Channel, msg amqp091.Deli
 			DeliveryMode: amqp091.Persistent,
 		},
 	)
-
 	if err != nil {
 		log.Error().Err(err).Str("event", logger.EventRabbitMQFail).Msg("Retry mesajı RabbitMQ'ya yazılamadı, Nack fallback yapılıyor.")
 		_ = msg.Nack(false, true)
